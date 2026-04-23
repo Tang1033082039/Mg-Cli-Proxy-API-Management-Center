@@ -29,6 +29,15 @@ interface ProviderStats {
 
 type TimeOfDay = 'morning' | 'afternoon' | 'evening' | 'night';
 
+const countCodexApiKeyEntries = (
+  configs: Array<{ apiKey?: string; apiKeyEntries?: Array<{ apiKey?: string }> }>
+) =>
+  configs.reduce((total, config) => {
+    const entries = config.apiKeyEntries?.filter((entry) => entry.apiKey?.trim()) ?? [];
+    if (entries.length) return total + entries.length;
+    return total + (config.apiKey?.trim() ? 1 : 0);
+  }, 0);
+
 function getTimeOfDay(): TimeOfDay {
   const hour = new Date().getHours();
   if (hour >= 5 && hour < 12) return 'morning';
@@ -167,7 +176,7 @@ export function DashboardPage() {
 
         setProviderStats({
           gemini: geminiRes.status === 'fulfilled' ? geminiRes.value.length : null,
-          codex: codexRes.status === 'fulfilled' ? codexRes.value.length : null,
+          codex: codexRes.status === 'fulfilled' ? countCodexApiKeyEntries(codexRes.value) : null,
           claude: claudeRes.status === 'fulfilled' ? claudeRes.value.length : null,
           openai: openaiRes.status === 'fulfilled' ? openaiRes.value.length : null
         });

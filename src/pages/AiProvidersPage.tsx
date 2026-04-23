@@ -19,9 +19,15 @@ import { usePageTransitionLayer } from '@/components/common/PageTransitionLayer'
 import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
 import { ampcodeApi, providersApi } from '@/services/api';
 import { useAuthStore, useConfigStore, useNotificationStore, useThemeStore } from '@/stores';
-import type { GeminiKeyConfig, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
+import type { ApiKeyEntry, GeminiKeyConfig, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
 import { indexUsageDetailsByAuthIndex, indexUsageDetailsBySource } from '@/utils/usageIndex';
 import styles from './AiProvidersPage.module.scss';
+
+const getCodexApiKeyEntries = (config: ProviderKeyConfig): ApiKeyEntry[] => {
+  if (config.apiKeyEntries?.length) return config.apiKeyEntries;
+  if (!config.apiKey) return [];
+  return [{ apiKey: config.apiKey, proxyUrl: config.proxyUrl, authIndex: config.authIndex }];
+};
 
 export function AiProvidersPage() {
   const { t } = useTranslation();
@@ -183,7 +189,7 @@ export function AiProvidersPage() {
   };
 
   const setConfigEnabled = async (
-    provider: 'gemini' | 'codex' | 'claude' | 'vertex',
+    provider: 'gemini' | 'claude' | 'vertex',
     index: number,
     enabled: boolean
   ) => {
@@ -223,12 +229,7 @@ export function AiProvidersPage() {
       return;
     }
 
-    const source =
-      provider === 'codex'
-        ? codexConfigs
-        : provider === 'claude'
-          ? claudeConfigs
-          : vertexConfigs;
+    const source = provider === 'claude' ? claudeConfigs : vertexConfigs;
     const current = source[index];
     if (!current) return;
 
@@ -242,11 +243,7 @@ export function AiProvidersPage() {
     const nextItem: ProviderKeyConfig = { ...current, excludedModels: nextExcluded };
     const nextList = previousList.map((item, idx) => (idx === index ? nextItem : item));
 
-    if (provider === 'codex') {
-      setCodexConfigs(nextList);
-      updateConfigValue('codex-api-key', nextList);
-      clearCache('codex-api-key');
-    } else if (provider === 'claude') {
+    if (provider === 'claude') {
       setClaudeConfigs(nextList);
       updateConfigValue('claude-api-key', nextList);
       clearCache('claude-api-key');
@@ -257,9 +254,7 @@ export function AiProvidersPage() {
     }
 
     try {
-      if (provider === 'codex') {
-        await providersApi.saveCodexConfigs(nextList);
-      } else if (provider === 'claude') {
+      if (provider === 'claude') {
         await providersApi.saveClaudeConfigs(nextList);
       } else {
         await providersApi.saveVertexConfigs(nextList);
@@ -270,11 +265,7 @@ export function AiProvidersPage() {
       );
     } catch (err: unknown) {
       const message = getErrorMessage(err);
-      if (provider === 'codex') {
-        setCodexConfigs(previousList);
-        updateConfigValue('codex-api-key', previousList);
-        clearCache('codex-api-key');
-      } else if (provider === 'claude') {
+      if (provider === 'claude') {
         setClaudeConfigs(previousList);
         updateConfigValue('claude-api-key', previousList);
         clearCache('claude-api-key');
@@ -283,6 +274,54 @@ export function AiProvidersPage() {
         updateConfigValue('vertex-api-key', previousList);
         clearCache('vertex-api-key');
       }
+      showNotification(`${t('notification.update_failed')}: ${message}`, 'error');
+    } finally {
+      setConfigSwitchingKey(null);
+    }
+  };
+
+  const setCodexApiKeyEntryEnabled = async (
+    configIndex: number,
+    entryIndex: number,
+    enabled: boolean
+  ) => {
+    const current = codexConfigs[configIndex];
+    if (!current) return;
+    const entries = getCodexApiKeyEntries(current);
+    const targetEntry = entries[entryIndex];
+    if (!targetEntry) return;
+
+    const switchingKey = `codex:${configIndex}:${entryIndex}`;
+    setConfigSwitchingKey(switchingKey);
+
+    const previousList = codexConfigs;
+    const nextEntries = entries.map((entry, idx) =>
+      idx === entryIndex ? { ...entry, disabled: !enabled } : entry
+    );
+    const nextItem: ProviderKeyConfig = {
+      ...current,
+      apiKey: '',
+      apiKeyEntries: nextEntries,
+    };
+    const nextList = previousList.map((item, idx) => (idx === configIndex ? nextItem : item));
+
+    setCodexConfigs(nextList);
+    updateConfigValue('codex-api-key', nextList);
+    clearCache('codex-api-key');
+
+    try {
+      await providersApi.updateCodexApiKeyEntry(configIndex, entryIndex, {
+        disabled: !enabled,
+      });
+      showNotification(
+        enabled ? t('notification.config_enabled') : t('notification.config_disabled'),
+        'success'
+      );
+    } catch (err: unknown) {
+      const message = getErrorMessage(err);
+      setCodexConfigs(previousList);
+      updateConfigValue('codex-api-key', previousList);
+      clearCache('codex-api-key');
       showNotification(`${t('notification.update_failed')}: ${message}`, 'error');
     } finally {
       setConfigSwitchingKey(null);
@@ -301,7 +340,7 @@ export function AiProvidersPage() {
       onConfirm: async () => {
         try {
           if (type === 'codex') {
-            await providersApi.deleteCodexConfig(entry.apiKey, entry.baseUrl);
+            await providersApi.deleteCodexConfigByIndex(index);
             const next = codexConfigs.filter((_, idx) => idx !== index);
             setCodexConfigs(next);
             updateConfigValue('codex-api-key', next);
@@ -405,7 +444,9 @@ export function AiProvidersPage() {
             onAdd={() => openEditor('/ai-providers/codex/new')}
             onEdit={(index) => openEditor(`/ai-providers/codex/${index}`)}
             onDelete={(index) => void deleteProviderEntry('codex', index)}
-            onToggle={(index, enabled) => void setConfigEnabled('codex', index, enabled)}
+            onToggleEntry={(configIndex, entryIndex, enabled) =>
+              void setCodexApiKeyEntryEnabled(configIndex, entryIndex, enabled)
+            }
           />
         </div>
 

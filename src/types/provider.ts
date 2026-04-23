@@ -1,6 +1,6 @@
 /**
- * AI 提供商相关类型
- * 基于原项目 src/modules/ai-providers.js
+ * AI provider types.
+ * Based on the original src/modules/ai-providers.js module.
  */
 
 export interface ModelAlias {
@@ -15,6 +15,7 @@ export interface ApiKeyEntry {
   proxyUrl?: string;
   headers?: Record<string, string>;
   authIndex?: string;
+  disabled?: boolean;
 }
 
 export interface CloakConfig {
@@ -37,6 +38,7 @@ export interface GeminiKeyConfig {
 
 export interface ProviderKeyConfig {
   apiKey: string;
+  apiKeyEntries?: ApiKeyEntry[];
   priority?: number;
   prefix?: string;
   baseUrl?: string;

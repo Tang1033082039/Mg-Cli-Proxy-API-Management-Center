@@ -1,9 +1,10 @@
 /**
- * AI 提供商相关 API
+ * AI provider APIs.
  */
 
 import { apiClient } from './client';
 import {
+  normalizeCodexKeyConfig,
   normalizeGeminiKeyConfig,
   normalizeOpenAIProvider,
   normalizeProviderKeyConfig
@@ -60,6 +61,15 @@ const serializeApiKeyEntry = (entry: ApiKeyEntry) => {
   if (entry.proxyUrl) payload['proxy-url'] = entry.proxyUrl;
   const headers = serializeHeaders(entry.headers);
   if (headers) payload.headers = headers;
+  if (entry.disabled === true) payload.disabled = true;
+  return payload;
+};
+
+const serializeApiKeyEntryPatch = (entry: Partial<ApiKeyEntry>) => {
+  const payload: Record<string, unknown> = {};
+  if (entry.apiKey !== undefined) payload['api-key'] = entry.apiKey;
+  if (entry.proxyUrl !== undefined) payload['proxy-url'] = entry.proxyUrl;
+  if (entry.disabled !== undefined) payload.disabled = entry.disabled;
   return payload;
 };
 
@@ -88,6 +98,25 @@ const serializeProviderKey = (config: ProviderKeyConfig) => {
     if (Object.keys(cloakPayload).length) {
       payload.cloak = cloakPayload;
     }
+  }
+  return payload;
+};
+
+const serializeCodexKey = (config: ProviderKeyConfig) => {
+  const payload = serializeProviderKey(config);
+  const apiKeyEntries = Array.isArray(config.apiKeyEntries)
+    ? config.apiKeyEntries
+        .map((entry) => ({
+          apiKey: entry.apiKey.trim(),
+          proxyUrl: entry.proxyUrl?.trim() || undefined,
+          disabled: entry.disabled === true,
+        }))
+        .filter((entry) => entry.apiKey)
+    : [];
+
+  if (apiKeyEntries.length) {
+    delete payload['api-key'];
+    payload['api-key-entries'] = apiKeyEntries.map((entry) => serializeApiKeyEntry(entry));
   }
   return payload;
 };
@@ -173,17 +202,31 @@ export const providersApi = {
   async getCodexConfigs(): Promise<ProviderKeyConfig[]> {
     const data = await apiClient.get('/codex-api-key');
     const list = extractArrayPayload(data, 'codex-api-key');
-    return list.map((item) => normalizeProviderKeyConfig(item)).filter(Boolean) as ProviderKeyConfig[];
+    return list.map((item) => normalizeCodexKeyConfig(item)).filter(Boolean) as ProviderKeyConfig[];
   },
 
   saveCodexConfigs: (configs: ProviderKeyConfig[]) =>
-    apiClient.put('/codex-api-key', configs.map((item) => serializeProviderKey(item))),
+    apiClient.put('/codex-api-key', configs.map((item) => serializeCodexKey(item))),
 
   updateCodexConfig: (index: number, value: ProviderKeyConfig) =>
-    apiClient.patch('/codex-api-key', { index, value: serializeProviderKey(value) }),
+    apiClient.patch('/codex-api-key', { index, value: serializeCodexKey(value) }),
+
+  updateCodexApiKeyEntry: (
+    configIndex: number,
+    apiKeyIndex: number,
+    value: Partial<ApiKeyEntry>
+  ) =>
+    apiClient.patch('/codex-api-key', {
+      index: configIndex,
+      'api-key-index': apiKeyIndex,
+      'api-key-value': serializeApiKeyEntryPatch(value),
+    }),
 
   deleteCodexConfig: (apiKey: string, baseUrl?: string) =>
     apiClient.delete(`/codex-api-key${buildProviderDeleteQuery(apiKey, baseUrl)}`),
+
+  deleteCodexConfigByIndex: (index: number) =>
+    apiClient.delete(`/codex-api-key?index=${encodeURIComponent(String(index))}`),
 
   async getClaudeConfigs(): Promise<ProviderKeyConfig[]> {
     const data = await apiClient.get('/claude-api-key');

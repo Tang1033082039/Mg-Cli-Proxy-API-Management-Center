@@ -3,8 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { IconCheck, IconX } from '@/components/ui/icons';
 import iconCodex from '@/assets/icons/codex.svg';
-import type { ProviderKeyConfig } from '@/types';
+import type { ApiKeyEntry, ProviderKeyConfig } from '@/types';
 import { maskApiKey } from '@/utils/format';
 import { calculateStatusBarData, type KeyStats } from '@/utils/usage';
 import { type UsageDetailsByAuthIndex, type UsageDetailsBySource } from '@/utils/usageIndex';
@@ -12,7 +13,9 @@ import styles from '@/pages/AiProvidersPage.module.scss';
 import { ProviderList } from '../ProviderList';
 import { ProviderStatusBar } from '../ProviderStatusBar';
 import {
-  collectUsageDetailsForIdentity,
+  collectCodexConfigUsageDetails,
+  getCodexConfigStats,
+  getCodexEntryKey,
   getProviderConfigKey,
   getStatsForIdentity,
   hasDisableAllModelsRule,
@@ -29,8 +32,14 @@ interface CodexSectionProps {
   onAdd: () => void;
   onEdit: (index: number) => void;
   onDelete: (index: number) => void;
-  onToggle: (index: number, enabled: boolean) => void;
+  onToggleEntry: (configIndex: number, entryIndex: number, enabled: boolean) => void;
 }
+
+const getCodexApiKeyEntries = (config: ProviderKeyConfig): ApiKeyEntry[] => {
+  if (config.apiKeyEntries?.length) return config.apiKeyEntries;
+  if (!config.apiKey) return [];
+  return [{ apiKey: config.apiKey, proxyUrl: config.proxyUrl, authIndex: config.authIndex }];
+};
 
 export function CodexSection({
   configs,
@@ -43,7 +52,7 @@ export function CodexSection({
   onAdd,
   onEdit,
   onDelete,
-  onToggle,
+  onToggleEntry,
 }: CodexSectionProps) {
   const { t } = useTranslation();
   const actionsDisabled = disableControls || loading || isSwitching;
@@ -53,13 +62,12 @@ export function CodexSection({
     const cache = new Map<string, ReturnType<typeof calculateStatusBarData>>();
 
     configs.forEach((config, index) => {
-      if (!config.apiKey) return;
       const configKey = getProviderConfigKey(config, index);
       cache.set(
         configKey,
         calculateStatusBarData(
-          collectUsageDetailsForIdentity(
-            { authIndex: config.authIndex, apiKey: config.apiKey, prefix: config.prefix },
+          collectCodexConfigUsageDetails(
+            config,
             usageDetailsBySource,
             usageDetailsByAuthIndex
           )
@@ -94,21 +102,14 @@ export function CodexSection({
           onEdit={onEdit}
           onDelete={onDelete}
           actionsDisabled={actionsDisabled}
-          getRowDisabled={(item) => hasDisableAllModelsRule(item.excludedModels)}
-          renderExtraActions={(item, index) => (
-            <ToggleSwitch
-              label={t('ai_providers.config_toggle_label')}
-              checked={!hasDisableAllModelsRule(item.excludedModels)}
-              disabled={toggleDisabled}
-              onChange={(value) => void onToggle(index, value)}
-            />
-          )}
+          getRowDisabled={(item) =>
+            hasDisableAllModelsRule(item.excludedModels) ||
+            getCodexApiKeyEntries(item).every((entry) => entry.disabled === true)
+          }
           renderContent={(item, index) => {
-            const stats = getStatsForIdentity(
-              { authIndex: item.authIndex, apiKey: item.apiKey, prefix: item.prefix },
-              keyStats
-            );
+            const stats = getCodexConfigStats(item, keyStats);
             const headerEntries = Object.entries(item.headers || {});
+            const apiKeyEntries = getCodexApiKeyEntries(item);
             const configDisabled = hasDisableAllModelsRule(item.excludedModels);
             const excludedModels = item.excludedModels ?? [];
             const statusData =
@@ -117,10 +118,6 @@ export function CodexSection({
             return (
               <Fragment>
                 <div className="item-title">{t('ai_providers.codex_item_title')}</div>
-                <div className={styles.fieldRow}>
-                  <span className={styles.fieldLabel}>{t('common.api_key')}:</span>
-                  <span className={styles.fieldValue}>{maskApiKey(item.apiKey)}</span>
-                </div>
                 {item.priority !== undefined && (
                   <div className={styles.fieldRow}>
                     <span className={styles.fieldLabel}>{t('common.priority')}:</span>
@@ -163,6 +160,58 @@ export function CodexSection({
                 {configDisabled && (
                   <div className="status-badge warning" style={{ marginTop: 8, marginBottom: 0 }}>
                     {t('ai_providers.config_disabled_badge')}
+                  </div>
+                )}
+                {apiKeyEntries.length > 0 && (
+                  <div className={styles.apiKeyEntriesSection}>
+                    <div className={styles.apiKeyEntriesLabel}>
+                      {t('ai_providers.codex_keys_count')}: {apiKeyEntries.length}
+                    </div>
+                    <div className={styles.apiKeyEntryList}>
+                      {apiKeyEntries.map((entry, entryIndex) => {
+                        const entryStats = getStatsForIdentity(
+                          { authIndex: entry.authIndex, apiKey: entry.apiKey },
+                          keyStats
+                        );
+                        const entryDisabled = entry.disabled === true;
+                        return (
+                          <div
+                            key={getCodexEntryKey(entry, entryIndex)}
+                            className={styles.apiKeyEntryCard}
+                            style={entryDisabled ? { opacity: 0.62 } : undefined}
+                          >
+                            <span className={styles.apiKeyEntryIndex}>{entryIndex + 1}</span>
+                            <span className={styles.apiKeyEntryKey}>{maskApiKey(entry.apiKey)}</span>
+                            {entry.proxyUrl && (
+                              <span className={styles.apiKeyEntryProxy}>{entry.proxyUrl}</span>
+                            )}
+                            {entryDisabled && (
+                              <span className="status-badge warning" style={{ margin: 0 }}>
+                                {t('ai_providers.config_disabled_badge')}
+                              </span>
+                            )}
+                            <ToggleSwitch
+                              checked={!entryDisabled}
+                              disabled={toggleDisabled}
+                              onChange={(value) => void onToggleEntry(index, entryIndex, value)}
+                              ariaLabel={`${t('ai_providers.config_toggle_label')} ${entryIndex + 1}`}
+                            />
+                            <div className={styles.apiKeyEntryStats}>
+                              <span
+                                className={`${styles.apiKeyEntryStat} ${styles.apiKeyEntryStatSuccess}`}
+                              >
+                                <IconCheck size={12} /> {entryStats.success}
+                              </span>
+                              <span
+                                className={`${styles.apiKeyEntryStat} ${styles.apiKeyEntryStatFailure}`}
+                              >
+                                <IconX size={12} /> {entryStats.failure}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
                 {item.models?.length ? (

@@ -73,7 +73,6 @@ export function buildSourceInfoMap(input: SourceInfoMapInput): SourceInfoMap {
   }> = [
     { items: input.geminiApiKeys || [], type: 'gemini', label: 'Gemini' },
     { items: input.claudeApiKeys || [], type: 'claude', label: 'Claude' },
-    { items: input.codexApiKeys || [], type: 'codex', label: 'Codex' },
     { items: input.vertexApiKeys || [], type: 'vertex', label: 'Vertex' },
   ];
 
@@ -89,6 +88,35 @@ export function buildSourceInfoMap(input: SourceInfoMapInput): SourceInfoMap {
         buildCandidateUsageSourceIds({ apiKey: item.apiKey, prefix: item.prefix })
       );
     });
+  });
+
+  (input.codexApiKeys || []).forEach((provider, providerIndex) => {
+    const candidates = new Set<string>();
+    const authIndices: Array<unknown> = [provider.authIndex];
+    const entries = provider.apiKeyEntries?.length
+      ? provider.apiKeyEntries
+      : provider.apiKey
+        ? [{ apiKey: provider.apiKey, authIndex: provider.authIndex }]
+        : [];
+
+    buildCandidateUsageSourceIds({
+      apiKey: provider.apiKey,
+      prefix: provider.prefix,
+    }).forEach((id) => candidates.add(id));
+    entries.forEach((entry) => {
+      authIndices.push(entry.authIndex);
+      buildCandidateUsageSourceIds({ apiKey: entry.apiKey }).forEach((id) => candidates.add(id));
+    });
+
+    registerProvider(
+      {
+        displayName: provider.prefix?.trim() || `Codex #${providerIndex + 1}`,
+        type: 'codex',
+        identityKey: buildProviderIdentityKey('codex', providerIndex),
+      },
+      authIndices,
+      candidates
+    );
   });
 
   (input.openaiCompatibility || []).forEach((provider, providerIndex) => {

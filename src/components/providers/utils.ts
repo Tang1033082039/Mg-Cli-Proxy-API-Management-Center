@@ -4,6 +4,7 @@ import type {
   AmpcodeUpstreamApiKeyMapping,
   ApiKeyEntry,
   OpenAIProviderConfig,
+  ProviderKeyConfig,
 } from '@/types';
 import {
   buildCandidateUsageSourceIds,
@@ -103,7 +104,7 @@ export const buildClaudeMessagesEndpoint = (baseUrl: string): string => {
   return `${trimmed}/v1/messages`;
 };
 
-// 根据 source (apiKey) 获取统计数据 - 与旧版逻辑一致
+// Resolve stats by source-compatible identifiers used by the legacy usage records.
 export const getStatsBySource = (
   apiKey: string,
   keyStats: KeyStats,
@@ -191,7 +192,75 @@ const mergeUsageDetails = (groups: UsageDetail[][]): UsageDetail[] => {
   return merged ?? firstDetails ?? [];
 };
 
-// 对于 OpenAI 提供商，汇总所有 apiKeyEntries 的统计 - 与旧版逻辑一致
+export const getCodexConfigStats = (
+  config: ProviderKeyConfig,
+  keyStats: KeyStats
+): KeyStatBucket => {
+  const apiKeyEntries = config.apiKeyEntries || [];
+  if (!apiKeyEntries.length) {
+    const stats = getStatsForIdentity(
+      { authIndex: config.authIndex, apiKey: config.apiKey, prefix: config.prefix },
+      keyStats
+    );
+    return { success: stats.success, failure: stats.failure };
+  }
+
+  let success = 0;
+  let failure = 0;
+  if (!normalizeAuthIndex(config.authIndex) && config.prefix) {
+    const prefixStats = getStatsBySource('', keyStats, config.prefix);
+    success += prefixStats.success;
+    failure += prefixStats.failure;
+  }
+
+  apiKeyEntries.forEach((entry) => {
+    const stats = getStatsForIdentity({ authIndex: entry.authIndex, apiKey: entry.apiKey }, keyStats);
+    success += stats.success;
+    failure += stats.failure;
+  });
+
+  return { success, failure };
+};
+
+export const collectCodexConfigUsageDetails = (
+  config: ProviderKeyConfig,
+  usageDetailsBySource: UsageDetailsBySource,
+  usageDetailsByAuthIndex: UsageDetailsByAuthIndex
+): UsageDetail[] => {
+  const apiKeyEntries = config.apiKeyEntries || [];
+  if (!apiKeyEntries.length) {
+    return collectUsageDetailsForIdentity(
+      { authIndex: config.authIndex, apiKey: config.apiKey, prefix: config.prefix },
+      usageDetailsBySource,
+      usageDetailsByAuthIndex
+    );
+  }
+
+  const groups: UsageDetail[][] = [];
+  if (!normalizeAuthIndex(config.authIndex) && config.prefix) {
+    groups.push(
+      collectUsageDetailsForIdentity(
+        { prefix: config.prefix },
+        usageDetailsBySource,
+        usageDetailsByAuthIndex
+      )
+    );
+  }
+
+  apiKeyEntries.forEach((entry) => {
+    groups.push(
+      collectUsageDetailsForIdentity(
+        { authIndex: entry.authIndex, apiKey: entry.apiKey },
+        usageDetailsBySource,
+        usageDetailsByAuthIndex
+      )
+    );
+  });
+
+  return mergeUsageDetails(groups);
+};
+
+// Aggregate all apiKeyEntries for an OpenAI-compatible provider.
 export const getOpenAIProviderStats = (
   provider: OpenAIProviderConfig,
   keyStats: KeyStats
@@ -291,10 +360,14 @@ export const getOpenAIEntryKey = (entry: ApiKeyEntry, index: number): string => 
   return `${entry.apiKey}::${entry.proxyUrl ?? ''}::${index}`;
 };
 
+export const getCodexEntryKey = (entry: ApiKeyEntry, index: number): string =>
+  getOpenAIEntryKey(entry, index);
+
 export const buildApiKeyEntry = (input?: Partial<ApiKeyEntry>): ApiKeyEntry => ({
   apiKey: input?.apiKey ?? '',
   proxyUrl: input?.proxyUrl ?? '',
   headers: input?.headers ?? {},
+  disabled: input?.disabled === true,
 });
 
 export const ampcodeMappingsToEntries = (mappings?: AmpcodeModelMapping[]): ModelEntry[] => {
