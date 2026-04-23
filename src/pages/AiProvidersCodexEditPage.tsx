@@ -26,11 +26,22 @@ import {
   parseExcludedModels,
 } from '@/components/providers/utils';
 import type { ProviderFormState } from '@/components/providers';
-import type { ModelInfo } from '@/utils/models';
+import { normalizeModelList, type ModelInfo } from '@/utils/models';
+import {
+  buildToCodexEndpoint,
+  buildToCodexSignedHeaders,
+  TOCODEX_DEFAULT_CHAT_PATH,
+  TOCODEX_DEFAULT_MODELS_PATH,
+  TOCODEX_DEFAULT_RESPONSES_COMPACT_PATH,
+  TOCODEX_DEFAULT_RESPONSES_PATH,
+  TOCODEX_DEFAULT_TEST_PATH,
+} from '@/utils/tocodex';
 import layoutStyles from './AiProvidersEditLayout.module.scss';
 import styles from './AiProvidersPage.module.scss';
 
 type LocationState = { fromAiProviders?: boolean } | null;
+type ProviderKind = 'codex' | 'tocodex';
+type AiProvidersCodexEditPageProps = { provider?: ProviderKind };
 
 type CodexFormState = ProviderFormState & {
   apiKeyEntries: ApiKeyEntry[];
@@ -45,17 +56,34 @@ const CODEX_TEST_TIMEOUT_MS = 30_000;
 const CODEX_TEST_USER_AGENT =
   'codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)';
 
+const TOCODEX_REQUEST_MODE_OPTIONS = [
+  {
+    value: 'responses',
+    labelKey: 'ai_providers.tocodex_request_mode_option_responses',
+  },
+  {
+    value: 'chat',
+    labelKey: 'ai_providers.tocodex_request_mode_option_chat',
+  },
+] as const;
+
 const buildKeyTestStatuses = (count: number): CodexKeyTestStatus[] =>
   Array.from({ length: Math.max(count, 1) }, () => ({ status: 'idle', message: '' }));
 
-const buildEmptyForm = (): CodexFormState => ({
+const buildEmptyForm = (provider: ProviderKind = 'codex'): CodexFormState => ({
   apiKey: '',
   apiKeyEntries: [buildApiKeyEntry()],
   priority: undefined,
   prefix: '',
   baseUrl: '',
-  websockets: false,
+  websockets: provider === 'codex' ? false : undefined,
   proxyUrl: '',
+  requestMode: provider === 'tocodex' ? 'responses' : '',
+  chatPath: provider === 'tocodex' ? TOCODEX_DEFAULT_CHAT_PATH : '',
+  responsesPath: provider === 'tocodex' ? TOCODEX_DEFAULT_RESPONSES_PATH : '',
+  responsesCompactPath: provider === 'tocodex' ? TOCODEX_DEFAULT_RESPONSES_COMPACT_PATH : '',
+  modelsPath: provider === 'tocodex' ? TOCODEX_DEFAULT_MODELS_PATH : '',
+  testPath: provider === 'tocodex' ? TOCODEX_DEFAULT_TEST_PATH : '',
   headers: [],
   models: [],
   excludedModels: [],
@@ -73,6 +101,13 @@ const getErrorMessage = (err: unknown) => {
   if (err instanceof Error) return err.message;
   if (typeof err === 'string') return err;
   return '';
+};
+
+const hasUsableApiKeyEntry = (entry: ApiKeyEntry | undefined, requireHmacSecret: boolean) => {
+  const apiKey = String(entry?.apiKey ?? '').trim();
+  if (!apiKey) return false;
+  if (!requireHmacSecret) return true;
+  return Boolean(String(entry?.hmacSecret ?? '').trim());
 };
 
 function StatusLoadingIcon() {
@@ -148,12 +183,15 @@ const normalizeModelEntries = (entries: Array<{ name: string; alias: string }>) 
   }, []);
 
 const normalizeCodexApiKeyEntries = (entries?: ApiKeyEntry[]) =>
-  (entries ?? []).reduce<Array<{ apiKey: string; proxyUrl: string; disabled: boolean }>>(
+  (entries ?? []).reduce<
+    Array<{ apiKey: string; hmacSecret: string; proxyUrl: string; disabled: boolean }>
+  >(
     (acc, entry) => {
       const apiKey = String(entry?.apiKey ?? '').trim();
+      const hmacSecret = String(entry?.hmacSecret ?? '').trim();
       const proxyUrl = String(entry?.proxyUrl ?? '').trim();
-      if (!apiKey && !proxyUrl) return acc;
-      acc.push({ apiKey, proxyUrl, disabled: entry?.disabled === true });
+      if (!apiKey && !hmacSecret && !proxyUrl) return acc;
+      acc.push({ apiKey, hmacSecret, proxyUrl, disabled: entry?.disabled === true });
       return acc;
     },
     []
@@ -171,6 +209,7 @@ const areNormalizedCodexApiKeyEntriesEqual = (
     if (!left || !right) return false;
     if (
       left.apiKey !== right.apiKey ||
+      left.hmacSecret !== right.hmacSecret ||
       left.proxyUrl !== right.proxyUrl ||
       left.disabled !== right.disabled
     ) {
@@ -184,12 +223,20 @@ const codexConfigToApiKeyEntries = (config: ProviderKeyConfig): ApiKeyEntry[] =>
   const entries = config.apiKeyEntries?.length
     ? config.apiKeyEntries
     : config.apiKey
-      ? [buildApiKeyEntry({ apiKey: config.apiKey, proxyUrl: config.proxyUrl, authIndex: config.authIndex })]
+      ? [
+          buildApiKeyEntry({
+            apiKey: config.apiKey,
+            hmacSecret: config.hmacSecret,
+            proxyUrl: config.proxyUrl,
+            authIndex: config.authIndex,
+          }),
+        ]
       : [];
   return entries.length
     ? entries.map((entry) =>
         buildApiKeyEntry({
           apiKey: entry.apiKey,
+          hmacSecret: entry.hmacSecret,
           proxyUrl: entry.proxyUrl,
           authIndex: entry.authIndex,
           disabled: entry.disabled,
@@ -205,6 +252,12 @@ type CodexFormBaseline = {
   baseUrl: string;
   websockets: boolean;
   proxyUrl: string;
+  requestMode: string;
+  chatPath: string;
+  responsesPath: string;
+  responsesCompactPath: string;
+  modelsPath: string;
+  testPath: string;
   headers: ReturnType<typeof normalizeHeaderEntries>;
   models: ReturnType<typeof normalizeModelEntries>;
   excludedModels: string[];
@@ -218,16 +271,28 @@ const buildCodexBaseline = (form: CodexFormState): CodexFormBaseline => ({
   baseUrl: String(form.baseUrl ?? '').trim(),
   websockets: Boolean(form.websockets),
   proxyUrl: String(form.proxyUrl ?? '').trim(),
+  requestMode: String(form.requestMode ?? '').trim(),
+  chatPath: String(form.chatPath ?? '').trim(),
+  responsesPath: String(form.responsesPath ?? '').trim(),
+  responsesCompactPath: String(form.responsesCompactPath ?? '').trim(),
+  modelsPath: String(form.modelsPath ?? '').trim(),
+  testPath: String(form.testPath ?? '').trim(),
   headers: normalizeHeaderEntries(form.headers),
   models: normalizeModelEntries(form.modelEntries),
   excludedModels: parseExcludedModels(form.excludedText ?? ''),
 });
 
-export function AiProvidersCodexEditPage() {
+export function AiProvidersCodexEditPage({
+  provider = 'codex',
+}: AiProvidersCodexEditPageProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const params = useParams<{ index?: string }>();
+  const isToCodex = provider === 'tocodex';
+  const configSection: 'codex-api-key' | 'tocodex-api-key' = isToCodex
+    ? 'tocodex-api-key'
+    : 'codex-api-key';
 
   const { showNotification } = useNotificationStore();
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
@@ -241,8 +306,8 @@ export function AiProvidersCodexEditPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [form, setForm] = useState<CodexFormState>(() => buildEmptyForm());
-  const [baseline, setBaseline] = useState(() => buildCodexBaseline(buildEmptyForm()));
+  const [form, setForm] = useState<CodexFormState>(() => buildEmptyForm(provider));
+  const [baseline, setBaseline] = useState(() => buildCodexBaseline(buildEmptyForm(provider)));
   const [testModel, setTestModel] = useState('');
   const [testStatus, setTestStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [testMessage, setTestMessage] = useState('');
@@ -274,8 +339,8 @@ export function AiProvidersCodexEditPage() {
 
   const title =
     editIndex !== null
-      ? t('ai_providers.codex_edit_modal_title')
-      : t('ai_providers.codex_add_modal_title');
+      ? t(isToCodex ? 'ai_providers.tocodex_edit_modal_title' : 'ai_providers.codex_edit_modal_title')
+      : t(isToCodex ? 'ai_providers.tocodex_add_modal_title' : 'ai_providers.codex_add_modal_title');
 
   const handleBack = useCallback(() => {
     const state = location.state as LocationState;
@@ -303,7 +368,7 @@ export function AiProvidersCodexEditPage() {
     setLoading(true);
     setError('');
 
-    fetchConfig('codex-api-key')
+    fetchConfig(configSection)
       .then((value) => {
         if (cancelled) return;
         setConfigs(Array.isArray(value) ? (value as ProviderKeyConfig[]) : []);
@@ -321,13 +386,14 @@ export function AiProvidersCodexEditPage() {
     return () => {
       cancelled = true;
     };
-  }, [fetchConfig, t]);
+  }, [configSection, fetchConfig, t]);
 
   useEffect(() => {
     if (loading) return;
 
     if (initialData) {
       const nextForm: CodexFormState = {
+        ...buildEmptyForm(provider),
         ...initialData,
         apiKeyEntries: codexConfigToApiKeyEntries(initialData),
         websockets: Boolean(initialData.websockets),
@@ -342,13 +408,13 @@ export function AiProvidersCodexEditPage() {
       setKeyTestStatuses(buildKeyTestStatuses(nextForm.apiKeyEntries.length));
       return;
     }
-    const nextForm = buildEmptyForm();
+    const nextForm = buildEmptyForm(provider);
     setForm(nextForm);
     setBaseline(buildCodexBaseline(nextForm));
     setTestStatus('idle');
     setTestMessage('');
     setKeyTestStatuses(buildKeyTestStatuses(nextForm.apiKeyEntries.length));
-  }, [initialData, loading]);
+  }, [initialData, loading, provider]);
 
   const normalizedHeaders = useMemo(() => normalizeHeaderEntries(form.headers), [form.headers]);
   const normalizedModels = useMemo(
@@ -391,6 +457,12 @@ export function AiProvidersCodexEditPage() {
     baseline.baseUrl !== String(form.baseUrl ?? '').trim() ||
     baseline.websockets !== Boolean(form.websockets) ||
     baseline.proxyUrl !== String(form.proxyUrl ?? '').trim() ||
+    baseline.requestMode !== String(form.requestMode ?? '').trim() ||
+    baseline.chatPath !== String(form.chatPath ?? '').trim() ||
+    baseline.responsesPath !== String(form.responsesPath ?? '').trim() ||
+    baseline.responsesCompactPath !== String(form.responsesCompactPath ?? '').trim() ||
+    baseline.modelsPath !== String(form.modelsPath ?? '').trim() ||
+    baseline.testPath !== String(form.testPath ?? '').trim() ||
     isHeadersDirty ||
     isModelsDirty ||
     isExcludedModelsDirty;
@@ -432,11 +504,26 @@ export function AiProvidersCodexEditPage() {
       visibleDiscoveredModelNames.every((name) => modelDiscoverySelected.has(name)),
     [modelDiscoverySelected, visibleDiscoveredModelNames]
   );
-  const modelDiscoveryApiKey = useMemo(
+  const modelDiscoveryEntry = useMemo(
     () =>
-      form.apiKeyEntries.find((entry) => !entry.disabled && entry.apiKey?.trim())?.apiKey.trim() ||
-      form.apiKey.trim(),
-    [form.apiKey, form.apiKeyEntries]
+      form.apiKeyEntries.find(
+        (entry) => !entry.disabled && hasUsableApiKeyEntry(entry, isToCodex)
+      ) ||
+      form.apiKeyEntries.find((entry) => hasUsableApiKeyEntry(entry, isToCodex)) ||
+      null,
+    [form.apiKeyEntries, isToCodex]
+  );
+  const modelDiscoveryApiKey = useMemo(
+    () => modelDiscoveryEntry?.apiKey.trim() || form.apiKey.trim(),
+    [form.apiKey, modelDiscoveryEntry]
+  );
+  const modelDiscoveryHmacSecret = useMemo(
+    () => modelDiscoveryEntry?.hmacSecret?.trim() || form.hmacSecret?.trim() || '',
+    [form.hmacSecret, modelDiscoveryEntry]
+  );
+  const modelDiscoveryProxyUrl = useMemo(
+    () => modelDiscoveryEntry?.proxyUrl?.trim() || form.proxyUrl?.trim() || '',
+    [form.proxyUrl, modelDiscoveryEntry]
   );
   const availableModels = useMemo(
     () => form.modelEntries.map((entry) => entry.name.trim()).filter(Boolean),
@@ -457,16 +544,19 @@ export function AiProvidersCodexEditPage() {
     }, []);
   }, [form.modelEntries]);
   const hasConfiguredModels = availableModels.length > 0;
-  const hasTestableKeys = form.apiKeyEntries.some((entry) => entry.apiKey?.trim());
+  const hasTestableKeys = form.apiKeyEntries.some((entry) => hasUsableApiKeyEntry(entry, isToCodex));
   const failedKeyIndexes = useMemo(
     () =>
       keyTestStatuses.reduce<number[]>((acc, status, index) => {
-        if (status?.status === 'error' && form.apiKeyEntries[index]?.apiKey?.trim()) {
+        if (
+          status?.status === 'error' &&
+          hasUsableApiKeyEntry(form.apiKeyEntries[index], isToCodex)
+        ) {
           acc.push(index);
         }
         return acc;
       }, []),
-    [form.apiKeyEntries, keyTestStatuses]
+    [form.apiKeyEntries, isToCodex, keyTestStatuses]
   );
   const connectivityConfigSignature = useMemo(() => {
     const headersSignature = form.headers
@@ -475,10 +565,34 @@ export function AiProvidersCodexEditPage() {
     const modelsSignature = form.modelEntries
       .map((entry) => `${entry.name.trim()}:${entry.alias.trim()}`)
       .join('|');
-    return [form.baseUrl.trim(), form.proxyUrl?.trim() || '', testModel.trim(), headersSignature, modelsSignature].join(
-      '||'
-    );
-  }, [form.baseUrl, form.headers, form.modelEntries, form.proxyUrl, testModel]);
+    return [
+      provider,
+      form.baseUrl.trim(),
+      form.proxyUrl?.trim() || '',
+      form.requestMode?.trim() || '',
+      form.chatPath?.trim() || '',
+      form.responsesPath?.trim() || '',
+      form.responsesCompactPath?.trim() || '',
+      form.modelsPath?.trim() || '',
+      form.testPath?.trim() || '',
+      testModel.trim(),
+      headersSignature,
+      modelsSignature,
+    ].join('||');
+  }, [
+    form.baseUrl,
+    form.chatPath,
+    form.headers,
+    form.modelEntries,
+    form.modelsPath,
+    form.proxyUrl,
+    form.requestMode,
+    form.responsesCompactPath,
+    form.responsesPath,
+    form.testPath,
+    provider,
+    testModel,
+  ]);
   const previousConnectivityConfigRef = useRef(connectivityConfigSignature);
 
   useEffect(() => {
@@ -559,13 +673,21 @@ export function AiProvidersCodexEditPage() {
     async (keyIndex: number): Promise<boolean> => {
       const baseUrl = form.baseUrl.trim();
       if (!baseUrl) {
-        showNotification(t('notification.codex_test_url_required'), 'error');
+        showNotification(
+          t(isToCodex ? 'notification.tocodex_test_url_required' : 'notification.codex_test_url_required'),
+          'error'
+        );
         return false;
       }
 
-      const endpoint = buildCodexResponsesCompactEndpoint(baseUrl);
+      const endpoint = isToCodex
+        ? buildToCodexEndpoint(baseUrl, form.testPath, TOCODEX_DEFAULT_TEST_PATH)
+        : buildCodexResponsesCompactEndpoint(baseUrl);
       if (!endpoint) {
-        showNotification(t('notification.codex_test_url_required'), 'error');
+        showNotification(
+          t(isToCodex ? 'notification.tocodex_test_url_required' : 'notification.codex_test_url_required'),
+          'error'
+        );
         return false;
       }
 
@@ -574,6 +696,13 @@ export function AiProvidersCodexEditPage() {
         setKeyTestStatus(keyIndex, {
           status: 'error',
           message: t('notification.codex_test_key_required'),
+        });
+        return false;
+      }
+      if (isToCodex && !keyEntry?.hmacSecret?.trim()) {
+        setKeyTestStatus(keyIndex, {
+          status: 'error',
+          message: t('notification.tocodex_hmac_secret_required'),
         });
         return false;
       }
@@ -591,26 +720,42 @@ export function AiProvidersCodexEditPage() {
         Connection: 'Keep-Alive',
         ...customHeaders,
       };
-      if (!Object.keys(headers).some((key) => key.toLowerCase() === 'authorization')) {
+      if (!isToCodex && !Object.keys(headers).some((key) => key.toLowerCase() === 'authorization')) {
         headers.Authorization = `Bearer ${keyEntry.apiKey.trim()}`;
       }
-      if (!Object.keys(headers).some((key) => key.toLowerCase() === 'user-agent')) {
+      if (!isToCodex && !Object.keys(headers).some((key) => key.toLowerCase() === 'user-agent')) {
         headers['User-Agent'] = CODEX_TEST_USER_AGENT;
       }
 
       setKeyTestStatus(keyIndex, { status: 'loading', message: '' });
 
       try {
+        const resolvedHeaders = isToCodex
+          ? await buildToCodexSignedHeaders({
+              method: 'POST',
+              endpoint,
+              apiKey: keyEntry.apiKey.trim(),
+              hmacSecret: keyEntry.hmacSecret?.trim() || '',
+              customHeaders,
+            })
+          : headers;
+        const requestBody = isToCodex
+          ? JSON.stringify({
+              model: modelName,
+              messages: [{ role: 'user', content: 'Hi' }],
+              stream: false,
+            })
+          : JSON.stringify({
+              model: modelName,
+              input: 'Hi',
+            });
         const result = await apiCallApi.request(
           {
             method: 'POST',
             url: endpoint,
             proxyUrl: keyEntry.proxyUrl?.trim() || form.proxyUrl?.trim() || undefined,
-            header: headers,
-            data: JSON.stringify({
-              model: modelName,
-              input: 'Hi',
-            }),
+            header: resolvedHeaders,
+            data: requestBody,
           },
           { timeout: CODEX_TEST_TIMEOUT_MS }
         );
@@ -637,7 +782,19 @@ export function AiProvidersCodexEditPage() {
         return false;
       }
     },
-    [availableModels, form.apiKeyEntries, form.baseUrl, form.headers, form.proxyUrl, setKeyTestStatus, showNotification, t, testModel]
+    [
+      availableModels,
+      form.apiKeyEntries,
+      form.baseUrl,
+      form.headers,
+      form.proxyUrl,
+      form.testPath,
+      isToCodex,
+      setKeyTestStatus,
+      showNotification,
+      t,
+      testModel,
+    ]
   );
 
   const testSingleKey = useCallback(
@@ -645,12 +802,12 @@ export function AiProvidersCodexEditPage() {
       if (isTestingKeys) return false;
       setIsTestingKeys(true);
       setTestStatus('loading');
-      setTestMessage(t('ai_providers.codex_test_running'));
+      setTestMessage(t(isToCodex ? 'ai_providers.tocodex_test_running' : 'ai_providers.codex_test_running'));
       try {
         const passed = await runSingleKeyTest(keyIndex);
         if (passed) {
           setTestStatus('success');
-          setTestMessage(t('ai_providers.codex_test_success'));
+          setTestMessage(t(isToCodex ? 'ai_providers.tocodex_test_success' : 'ai_providers.codex_test_success'));
         } else {
           setTestStatus('error');
           setTestMessage(t('ai_providers.codex_test_failed'));
@@ -660,7 +817,7 @@ export function AiProvidersCodexEditPage() {
         setIsTestingKeys(false);
       }
     },
-    [isTestingKeys, runSingleKeyTest, t]
+    [isTestingKeys, isToCodex, runSingleKeyTest, t]
   );
 
   const testAllKeys = useCallback(async () => {
@@ -668,16 +825,22 @@ export function AiProvidersCodexEditPage() {
 
     const baseUrl = form.baseUrl.trim();
     if (!baseUrl) {
-      const message = t('notification.codex_test_url_required');
+      const message = t(
+        isToCodex ? 'notification.tocodex_test_url_required' : 'notification.codex_test_url_required'
+      );
       setTestStatus('error');
       setTestMessage(message);
       showNotification(message, 'error');
       return;
     }
 
-    const endpoint = buildCodexResponsesCompactEndpoint(baseUrl);
+    const endpoint = isToCodex
+      ? buildToCodexEndpoint(baseUrl, form.testPath, TOCODEX_DEFAULT_TEST_PATH)
+      : buildCodexResponsesCompactEndpoint(baseUrl);
     if (!endpoint) {
-      const message = t('notification.codex_test_url_required');
+      const message = t(
+        isToCodex ? 'notification.tocodex_test_url_required' : 'notification.codex_test_url_required'
+      );
       setTestStatus('error');
       setTestMessage(message);
       showNotification(message, 'error');
@@ -694,10 +857,19 @@ export function AiProvidersCodexEditPage() {
     }
 
     const validKeyIndexes = form.apiKeyEntries
-      .map((entry, index) => (entry.apiKey?.trim() ? index : -1))
+      .map((entry, index) => (hasUsableApiKeyEntry(entry, isToCodex) ? index : -1))
       .filter((index) => index >= 0);
+    if (isToCodex && form.apiKeyEntries.some((entry) => entry.apiKey?.trim() && !entry.hmacSecret?.trim())) {
+      const message = t('notification.tocodex_hmac_secret_required');
+      setTestStatus('error');
+      setTestMessage(message);
+      showNotification(message, 'error');
+      return;
+    }
     if (validKeyIndexes.length === 0) {
-      const message = t('notification.codex_test_key_required');
+      const message = t(
+        isToCodex ? 'notification.tocodex_test_key_required' : 'notification.codex_test_key_required'
+      );
       setTestStatus('error');
       setTestMessage(message);
       showNotification(message, 'error');
@@ -706,7 +878,7 @@ export function AiProvidersCodexEditPage() {
 
     setIsTestingKeys(true);
     setTestStatus('loading');
-    setTestMessage(t('ai_providers.codex_test_running'));
+    setTestMessage(t(isToCodex ? 'ai_providers.tocodex_test_running' : 'ai_providers.codex_test_running'));
     setKeyTestStatuses(buildKeyTestStatuses(form.apiKeyEntries.length));
 
     try {
@@ -736,7 +908,18 @@ export function AiProvidersCodexEditPage() {
     } finally {
       setIsTestingKeys(false);
     }
-  }, [availableModels, form.apiKeyEntries, form.baseUrl, isTestingKeys, runSingleKeyTest, showNotification, t, testModel]);
+  }, [
+    availableModels,
+    form.apiKeyEntries,
+    form.baseUrl,
+    form.testPath,
+    isTestingKeys,
+    isToCodex,
+    runSingleKeyTest,
+    showNotification,
+    t,
+    testModel,
+  ]);
 
   const disableFailedKeys = useCallback(() => {
     if (!failedKeyIndexes.length) return;
@@ -783,15 +966,51 @@ export function AiProvidersCodexEditPage() {
 
     try {
       const headerObject = buildHeaderObject(form.headers);
-      const hasCustomAuthorization = Object.keys(headerObject).some(
-        (key) => key.toLowerCase() === 'authorization'
-      );
-      const apiKey = modelDiscoveryApiKey || undefined;
-      const list = await modelsApi.fetchV1ModelsViaApiCall(
-        form.baseUrl ?? '',
-        hasCustomAuthorization ? undefined : apiKey,
-        headerObject
-      );
+      let list: ModelInfo[] = [];
+      if (isToCodex) {
+        const endpoint = buildToCodexEndpoint(
+          form.baseUrl ?? '',
+          form.modelsPath,
+          TOCODEX_DEFAULT_MODELS_PATH
+        );
+        if (!endpoint) {
+          throw new Error(t('notification.tocodex_test_url_required'));
+        }
+        if (!modelDiscoveryApiKey) {
+          throw new Error(t('notification.tocodex_test_key_required'));
+        }
+        if (!modelDiscoveryHmacSecret) {
+          throw new Error(t('notification.tocodex_hmac_secret_required'));
+        }
+        const resolvedHeaders = await buildToCodexSignedHeaders({
+          method: 'GET',
+          endpoint,
+          apiKey: modelDiscoveryApiKey,
+          hmacSecret: modelDiscoveryHmacSecret,
+          customHeaders: headerObject,
+          contentType: null,
+        });
+        const result = await apiCallApi.request({
+          method: 'GET',
+          url: endpoint,
+          proxyUrl: modelDiscoveryProxyUrl || undefined,
+          header: resolvedHeaders,
+        });
+        if (result.statusCode < 200 || result.statusCode >= 300) {
+          throw new Error(getApiCallErrorMessage(result));
+        }
+        list = normalizeModelList(result.body ?? result.bodyText, { dedupe: true });
+      } else {
+        const hasCustomAuthorization = Object.keys(headerObject).some(
+          (key) => key.toLowerCase() === 'authorization'
+        );
+        const apiKey = modelDiscoveryApiKey || undefined;
+        list = await modelsApi.fetchV1ModelsViaApiCall(
+          form.baseUrl ?? '',
+          hasCustomAuthorization ? undefined : apiKey,
+          headerObject
+        );
+      }
       if (modelDiscoveryRequestIdRef.current !== requestId) return;
       setDiscoveredModels(list);
     } catch (err: unknown) {
@@ -804,7 +1023,16 @@ export function AiProvidersCodexEditPage() {
         setModelDiscoveryFetching(false);
       }
     }
-  }, [form.baseUrl, form.headers, modelDiscoveryApiKey, t]);
+  }, [
+    form.baseUrl,
+    form.headers,
+    form.modelsPath,
+    isToCodex,
+    modelDiscoveryApiKey,
+    modelDiscoveryHmacSecret,
+    modelDiscoveryProxyUrl,
+    t,
+  ]);
 
   useEffect(() => {
     if (!modelDiscoveryOpen) {
@@ -814,7 +1042,9 @@ export function AiProvidersCodexEditPage() {
       return;
     }
 
-    const nextEndpoint = modelsApi.buildV1ModelsEndpoint(form.baseUrl ?? '');
+    const nextEndpoint = isToCodex
+      ? buildToCodexEndpoint(form.baseUrl ?? '', form.modelsPath, TOCODEX_DEFAULT_MODELS_PATH)
+      : modelsApi.buildV1ModelsEndpoint(form.baseUrl ?? '');
     setModelDiscoveryEndpoint(nextEndpoint);
     setDiscoveredModels([]);
     setModelDiscoverySearch('');
@@ -828,20 +1058,32 @@ export function AiProvidersCodexEditPage() {
       (key) => key.toLowerCase() === 'authorization'
     );
     const hasApiKeyField = Boolean(modelDiscoveryApiKey);
+    const hasHmacSecretField = Boolean(modelDiscoveryHmacSecret);
     const canAutoFetch = hasApiKeyField || hasCustomAuthorization;
+    const canAutoFetchToCodex = hasApiKeyField && hasHmacSecretField;
 
-    if (!canAutoFetch) return;
+    if (isToCodex ? !canAutoFetchToCodex : !canAutoFetch) return;
 
     const headerSignature = Object.entries(headerObject)
       .sort(([a], [b]) => a.toLowerCase().localeCompare(b.toLowerCase()))
       .map(([key, value]) => `${key}:${value}`)
       .join('|');
-    const signature = `${nextEndpoint}||${modelDiscoveryApiKey}||${headerSignature}`;
+    const signature = `${nextEndpoint}||${modelDiscoveryApiKey}||${modelDiscoveryHmacSecret}||${modelDiscoveryProxyUrl}||${headerSignature}`;
     if (autoFetchSignatureRef.current === signature) return;
     autoFetchSignatureRef.current = signature;
 
     void fetchCodexModelDiscovery();
-  }, [fetchCodexModelDiscovery, form.baseUrl, form.headers, modelDiscoveryApiKey, modelDiscoveryOpen]);
+  }, [
+    fetchCodexModelDiscovery,
+    form.baseUrl,
+    form.headers,
+    form.modelsPath,
+    isToCodex,
+    modelDiscoveryApiKey,
+    modelDiscoveryHmacSecret,
+    modelDiscoveryOpen,
+    modelDiscoveryProxyUrl,
+  ]);
 
   useEffect(() => {
     const availableNames = new Set(discoveredModels.map((model) => model.name));
@@ -899,18 +1141,29 @@ export function AiProvidersCodexEditPage() {
     const trimmedBaseUrl = (form.baseUrl ?? '').trim();
     const baseUrl = trimmedBaseUrl || undefined;
     if (!baseUrl) {
-      showNotification(t('notification.codex_base_url_required'), 'error');
+      showNotification(
+        t(isToCodex ? 'notification.tocodex_base_url_required' : 'notification.codex_base_url_required'),
+        'error'
+      );
       return;
     }
     const apiKeyEntries = form.apiKeyEntries
       .map((entry) => ({
         apiKey: entry.apiKey.trim(),
+        hmacSecret: entry.hmacSecret?.trim() || undefined,
         proxyUrl: entry.proxyUrl?.trim() || undefined,
         disabled: entry.disabled === true,
       }))
       .filter((entry) => entry.apiKey);
+    if (isToCodex && apiKeyEntries.some((entry) => !entry.hmacSecret)) {
+      showNotification(t('notification.tocodex_hmac_secret_required'), 'error');
+      return;
+    }
     if (!apiKeyEntries.length) {
-      showNotification(t('notification.codex_api_key_required'), 'error');
+      showNotification(
+        t(isToCodex ? 'notification.tocodex_api_key_required' : 'notification.codex_api_key_required'),
+        'error'
+      );
       return;
     }
 
@@ -923,8 +1176,16 @@ export function AiProvidersCodexEditPage() {
         priority: form.priority !== undefined ? Math.trunc(form.priority) : undefined,
         prefix: form.prefix?.trim() || undefined,
         baseUrl,
-        websockets: Boolean(form.websockets),
+        websockets: isToCodex ? undefined : Boolean(form.websockets),
         proxyUrl: form.proxyUrl?.trim() || undefined,
+        requestMode: isToCodex ? form.requestMode?.trim() || 'responses' : undefined,
+        chatPath: isToCodex ? form.chatPath?.trim() || undefined : undefined,
+        responsesPath: isToCodex ? form.responsesPath?.trim() || undefined : undefined,
+        responsesCompactPath: isToCodex
+          ? form.responsesCompactPath?.trim() || undefined
+          : undefined,
+        modelsPath: isToCodex ? form.modelsPath?.trim() || undefined : undefined,
+        testPath: isToCodex ? form.testPath?.trim() || undefined : undefined,
         headers: buildHeaderObject(form.headers),
         models: entriesToModels(form.modelEntries),
         excludedModels: parseExcludedModels(form.excludedText),
@@ -935,12 +1196,16 @@ export function AiProvidersCodexEditPage() {
           ? configs.map((item, idx) => (idx === editIndex ? payload : item))
           : [...configs, payload];
 
-      await providersApi.saveCodexConfigs(nextList);
+      if (isToCodex) {
+        await providersApi.saveToCodexConfigs(nextList);
+      } else {
+        await providersApi.saveCodexConfigs(nextList);
+      }
 
       let syncedConfigs = nextList;
       let refreshed = false;
       try {
-        const latest = await fetchConfig('codex-api-key', true);
+        const latest = await fetchConfig(configSection, true);
         if (Array.isArray(latest)) {
           syncedConfigs = latest as ProviderKeyConfig[];
           refreshed = true;
@@ -950,15 +1215,15 @@ export function AiProvidersCodexEditPage() {
       }
 
       if (!refreshed) {
-        updateConfigValue('codex-api-key', syncedConfigs);
-        clearCache('codex-api-key');
+        updateConfigValue(configSection, syncedConfigs);
+        clearCache(configSection);
       }
 
       setConfigs(syncedConfigs);
       showNotification(
         editIndex !== null
-          ? t('notification.codex_config_updated')
-          : t('notification.codex_config_added'),
+          ? t(isToCodex ? 'notification.tocodex_config_updated' : 'notification.codex_config_updated')
+          : t(isToCodex ? 'notification.tocodex_config_added' : 'notification.codex_config_added'),
         'success'
       );
       allowNextNavigation();
@@ -974,12 +1239,14 @@ export function AiProvidersCodexEditPage() {
   }, [
     allowNextNavigation,
     canSave,
-    fetchConfig,
     clearCache,
+    configSection,
     configs,
     editIndex,
+    fetchConfig,
     form,
     handleBack,
+    isToCodex,
     showNotification,
     t,
     updateConfigValue,
@@ -1003,12 +1270,13 @@ export function AiProvidersCodexEditPage() {
   const renderKeyEntries = (entries: ApiKeyEntry[]) => {
     const list = entries.length ? entries : [buildApiKeyEntry()];
     const tableLayoutStyle = {
-      gridTemplateColumns:
-        '46px 56px 72px minmax(220px, 1.4fr) minmax(200px, 1.1fr) 180px',
-      minWidth: '860px',
+      gridTemplateColumns: isToCodex
+        ? '46px 56px 72px minmax(220px, 1.2fr) minmax(220px, 1.2fr) minmax(200px, 1fr) 180px'
+        : '46px 56px 72px minmax(220px, 1.4fr) minmax(200px, 1.1fr) 180px',
+      minWidth: isToCodex ? '1080px' : '860px',
     } as const;
 
-    const updateEntry = (idx: number, field: 'apiKey' | 'proxyUrl', value: string) => {
+    const updateEntry = (idx: number, field: 'apiKey' | 'hmacSecret' | 'proxyUrl', value: string) => {
       const next = list.map((entry, i) =>
         i === idx ? { ...entry, [field]: value, authIndex: undefined } : entry
       );
@@ -1061,13 +1329,21 @@ export function AiProvidersCodexEditPage() {
             <div className={styles.keyTableColStatus}>{t('common.status')}</div>
             <div className={styles.keyTableColStatus}>{t('ai_providers.config_toggle_label')}</div>
             <div className={styles.keyTableColKey}>{t('common.api_key')}</div>
+            {isToCodex && (
+              <div className={styles.keyTableColKey}>
+                {t('ai_providers.tocodex_hmac_secret_label')}
+              </div>
+            )}
             <div className={styles.keyTableColProxy}>{t('common.proxy_url')}</div>
             <div className={styles.keyTableColAction}>{t('common.action')}</div>
           </div>
           {list.map((entry, index) => {
             const keyStatus = keyTestStatuses[index] ?? { status: 'idle', message: '' };
             const modelName = testModel.trim() || availableModels[0] || '';
-            const canTestKey = Boolean(entry.apiKey?.trim()) && Boolean(form.baseUrl.trim()) && Boolean(modelName);
+            const canTestKey =
+              hasUsableApiKeyEntry(entry, isToCodex) &&
+              Boolean(form.baseUrl.trim()) &&
+              Boolean(modelName);
 
             return (
               <div key={index} className={styles.keyTableRow} style={tableLayoutStyle}>
@@ -1098,6 +1374,18 @@ export function AiProvidersCodexEditPage() {
                     placeholder={t('ai_providers.codex_add_modal_key_placeholder')}
                   />
                 </div>
+                {isToCodex && (
+                  <div className={styles.keyTableColKey}>
+                    <input
+                      type="text"
+                      value={entry.hmacSecret ?? ''}
+                      onChange={(e) => updateEntry(index, 'hmacSecret', e.target.value)}
+                      disabled={saving || disableControls || isTestingKeys}
+                      className={`input ${styles.keyTableInput}`}
+                      placeholder={t('ai_providers.tocodex_hmac_secret_placeholder')}
+                    />
+                  </div>
+                )}
                 <div className={styles.keyTableColProxy}>
                   <input
                     type="text"
@@ -1205,22 +1493,81 @@ export function AiProvidersCodexEditPage() {
               onChange={(e) => setForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
               disabled={disableControls || saving || isTestingKeys}
             />
-            <div className="form-group">
-              <label>{t('ai_providers.codex_websockets_label')}</label>
-              <ToggleSwitch
-                checked={Boolean(form.websockets)}
-                onChange={(value) => setForm((prev) => ({ ...prev, websockets: value }))}
-                disabled={disableControls || saving || isTestingKeys}
-                ariaLabel={t('ai_providers.codex_websockets_label')}
-              />
-              <div className="hint">{t('ai_providers.codex_websockets_hint')}</div>
-            </div>
+            {isToCodex ? (
+              <div className="form-group">
+                <label>{t('ai_providers.tocodex_request_mode_label')}</label>
+                <Select
+                  value={form.requestMode ?? 'responses'}
+                  options={TOCODEX_REQUEST_MODE_OPTIONS.map((option) => ({
+                    value: option.value,
+                    label: t(option.labelKey),
+                  }))}
+                  onChange={(value) =>
+                    setForm((prev) => ({
+                      ...prev,
+                      requestMode: value || 'responses',
+                    }))
+                  }
+                  className={styles.openaiTestSelect}
+                  ariaLabel={t('ai_providers.tocodex_request_mode_label')}
+                  disabled={disableControls || saving || isTestingKeys}
+                />
+                <div className="hint">{t('ai_providers.tocodex_request_mode_hint')}</div>
+              </div>
+            ) : (
+              <div className="form-group">
+                <label>{t('ai_providers.codex_websockets_label')}</label>
+                <ToggleSwitch
+                  checked={Boolean(form.websockets)}
+                  onChange={(value) => setForm((prev) => ({ ...prev, websockets: value }))}
+                  disabled={disableControls || saving || isTestingKeys}
+                  ariaLabel={t('ai_providers.codex_websockets_label')}
+                />
+                <div className="hint">{t('ai_providers.codex_websockets_hint')}</div>
+              </div>
+            )}
             <Input
               label={t('ai_providers.codex_add_modal_proxy_label')}
               value={form.proxyUrl ?? ''}
               onChange={(e) => setForm((prev) => ({ ...prev, proxyUrl: e.target.value }))}
               disabled={disableControls || saving || isTestingKeys}
             />
+            {isToCodex && (
+              <>
+                <Input
+                  label={t('ai_providers.tocodex_chat_path_label')}
+                  value={form.chatPath ?? ''}
+                  onChange={(e) => setForm((prev) => ({ ...prev, chatPath: e.target.value }))}
+                  disabled={disableControls || saving || isTestingKeys}
+                />
+                <Input
+                  label={t('ai_providers.tocodex_responses_path_label')}
+                  value={form.responsesPath ?? ''}
+                  onChange={(e) => setForm((prev) => ({ ...prev, responsesPath: e.target.value }))}
+                  disabled={disableControls || saving || isTestingKeys}
+                />
+                <Input
+                  label={t('ai_providers.tocodex_responses_compact_path_label')}
+                  value={form.responsesCompactPath ?? ''}
+                  onChange={(e) =>
+                    setForm((prev) => ({ ...prev, responsesCompactPath: e.target.value }))
+                  }
+                  disabled={disableControls || saving || isTestingKeys}
+                />
+                <Input
+                  label={t('ai_providers.tocodex_models_path_label')}
+                  value={form.modelsPath ?? ''}
+                  onChange={(e) => setForm((prev) => ({ ...prev, modelsPath: e.target.value }))}
+                  disabled={disableControls || saving || isTestingKeys}
+                />
+                <Input
+                  label={t('ai_providers.tocodex_test_path_label')}
+                  value={form.testPath ?? ''}
+                  onChange={(e) => setForm((prev) => ({ ...prev, testPath: e.target.value }))}
+                  disabled={disableControls || saving || isTestingKeys}
+                />
+              </>
+            )}
             <HeaderInputList
               entries={form.headers}
               onChange={(entries) => setForm((prev) => ({ ...prev, headers: entries }))}
@@ -1281,7 +1628,9 @@ export function AiProvidersCodexEditPage() {
             <div className={styles.modelTestPanel}>
               <div className={styles.modelTestMeta}>
                 <label className={styles.modelTestLabel}>{t('ai_providers.codex_test_title')}</label>
-                <span className={styles.modelTestHint}>{t('ai_providers.codex_test_hint')}</span>
+                <span className={styles.modelTestHint}>
+                  {t(isToCodex ? 'ai_providers.tocodex_test_hint' : 'ai_providers.codex_test_hint')}
+                </span>
               </div>
               <div className={styles.modelTestControls}>
                 <Select
@@ -1382,7 +1731,7 @@ export function AiProvidersCodexEditPage() {
 
             <Modal
               open={modelDiscoveryOpen}
-              title={t('ai_providers.codex_models_fetch_title')}
+              title={t(isToCodex ? 'ai_providers.tocodex_models_fetch_title' : 'ai_providers.codex_models_fetch_title')}
               onClose={() => setModelDiscoveryOpen(false)}
               width={720}
               footer={
@@ -1407,7 +1756,7 @@ export function AiProvidersCodexEditPage() {
             >
               <div className={styles.openaiModelsContent}>
                 <div className={styles.sectionHint}>
-                  {t('ai_providers.codex_models_fetch_hint')}
+                  {t(isToCodex ? 'ai_providers.tocodex_models_fetch_hint' : 'ai_providers.codex_models_fetch_hint')}
                 </div>
                 <div className={styles.openaiModelsEndpointSection}>
                   <label className={styles.openaiModelsEndpointLabel}>

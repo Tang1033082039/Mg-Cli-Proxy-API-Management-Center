@@ -12,6 +12,7 @@ export interface ModelAlias {
 
 export interface ApiKeyEntry {
   apiKey: string;
+  hmacSecret?: string;
   proxyUrl?: string;
   headers?: Record<string, string>;
   authIndex?: string;
@@ -38,12 +39,19 @@ export interface GeminiKeyConfig {
 
 export interface ProviderKeyConfig {
   apiKey: string;
+  hmacSecret?: string;
   apiKeyEntries?: ApiKeyEntry[];
   priority?: number;
   prefix?: string;
   baseUrl?: string;
   websockets?: boolean;
   proxyUrl?: string;
+  requestMode?: string;
+  chatPath?: string;
+  responsesPath?: string;
+  responsesCompactPath?: string;
+  modelsPath?: string;
+  testPath?: string;
   headers?: Record<string, string>;
   models?: ModelAlias[];
   excludedModels?: string[];

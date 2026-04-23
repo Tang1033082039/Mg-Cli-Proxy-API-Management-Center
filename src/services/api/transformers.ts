@@ -100,6 +100,50 @@ const normalizeAuthIndex = (value: unknown): string | undefined => {
   return trimmed ? trimmed : undefined;
 };
 
+const normalizeText = (value: unknown): string | undefined => {
+  if (value === undefined || value === null) return undefined;
+  const trimmed = String(value).trim();
+  return trimmed ? trimmed : undefined;
+};
+
+const applyExtendedProviderConfig = (
+  config: ProviderKeyConfig,
+  record: Record<string, unknown> | null
+) => {
+  const hmacSecret = normalizeText(
+    record?.['hmac-secret'] ?? record?.hmacSecret ?? record?.hmac_secret
+  );
+  if (hmacSecret) config.hmacSecret = hmacSecret;
+
+  const requestMode = normalizeText(
+    record?.['request-mode'] ?? record?.requestMode ?? record?.request_mode
+  );
+  if (requestMode) config.requestMode = requestMode;
+
+  const chatPath = normalizeText(record?.['chat-path'] ?? record?.chatPath ?? record?.chat_path);
+  if (chatPath) config.chatPath = chatPath;
+
+  const responsesPath = normalizeText(
+    record?.['responses-path'] ?? record?.responsesPath ?? record?.responses_path
+  );
+  if (responsesPath) config.responsesPath = responsesPath;
+
+  const responsesCompactPath = normalizeText(
+    record?.['responses-compact-path'] ??
+      record?.responsesCompactPath ??
+      record?.responses_compact_path
+  );
+  if (responsesCompactPath) config.responsesCompactPath = responsesCompactPath;
+
+  const modelsPath = normalizeText(
+    record?.['models-path'] ?? record?.modelsPath ?? record?.models_path
+  );
+  if (modelsPath) config.modelsPath = modelsPath;
+
+  const testPath = normalizeText(record?.['test-path'] ?? record?.testPath ?? record?.test_path);
+  if (testPath) config.testPath = testPath;
+};
+
 const normalizeApiKeyEntry = (entry: unknown): ApiKeyEntry | null => {
   if (entry === undefined || entry === null) return null;
   const record = isRecord(entry) ? entry : null;
@@ -116,12 +160,16 @@ const normalizeApiKeyEntry = (entry: unknown): ApiKeyEntry | null => {
   const disabled = record
     ? normalizeBoolean(record.disabled ?? record.Disabled ?? record['disabled'])
     : undefined;
+  const hmacSecret = normalizeText(
+    record?.['hmac-secret'] ?? record?.hmacSecret ?? record?.hmac_secret
+  );
 
   const result: ApiKeyEntry = {
     apiKey: trimmed,
     proxyUrl: proxyUrl ? String(proxyUrl) : undefined,
     headers
   };
+  if (hmacSecret) result.hmacSecret = hmacSecret;
   if (authIndex) result.authIndex = authIndex;
   if (disabled !== undefined) result.disabled = disabled;
   return result;
@@ -165,6 +213,7 @@ const normalizeProviderKeyConfig = (item: unknown): ProviderKeyConfig | null => 
     record?.['auth-index'] ?? record?.authIndex ?? record?.['auth_index']
   );
   if (authIndex) config.authIndex = authIndex;
+  applyExtendedProviderConfig(config, record);
 
   const cloakRaw = record?.cloak;
   if (isRecord(cloakRaw)) {
@@ -266,6 +315,71 @@ const normalizeCodexKeyConfig = (item: unknown): ProviderKeyConfig | null => {
     }
   }
 
+  if (apiKeyEntries.length) {
+    config.apiKeyEntries = apiKeyEntries;
+  }
+
+  return config;
+};
+
+const normalizeToCodexKeyConfig = (item: unknown): ProviderKeyConfig | null => {
+  if (item === undefined || item === null) return null;
+  const record = isRecord(item) ? item : null;
+  const apiKey = record?.['api-key'] ?? record?.apiKey ?? (typeof item === 'string' ? item : '');
+  const trimmed = String(apiKey || '').trim();
+  const topLevelSecret = normalizeText(
+    record?.['hmac-secret'] ?? record?.hmacSecret ?? record?.hmac_secret
+  );
+  const rawEntries = record?.['api-key-entries'] ?? record?.apiKeyEntries ?? record?.api_key_entries;
+  let apiKeyEntries = Array.isArray(rawEntries)
+    ? (rawEntries
+        .map((entry) => normalizeApiKeyEntry(entry))
+        .filter(
+          (entry): entry is ApiKeyEntry =>
+            Boolean(entry?.apiKey?.trim()) && Boolean(entry?.hmacSecret?.trim())
+        ))
+    : [];
+
+  const authIndex = normalizeAuthIndex(
+    record?.['auth-index'] ?? record?.authIndex ?? record?.['auth_index']
+  );
+  if (!apiKeyEntries.length && trimmed && topLevelSecret) {
+    const legacyEntry: ApiKeyEntry = { apiKey: trimmed, hmacSecret: topLevelSecret };
+    if (authIndex) legacyEntry.authIndex = authIndex;
+    apiKeyEntries = [legacyEntry];
+  }
+  if (!trimmed && !apiKeyEntries.length) return null;
+
+  const config: ProviderKeyConfig = { apiKey: apiKeyEntries.length ? '' : trimmed };
+  if (!apiKeyEntries.length && topLevelSecret) {
+    config.hmacSecret = topLevelSecret;
+  }
+  const priority = record?.priority ?? record?.['priority'];
+  if (priority !== undefined && priority !== null && String(priority).trim() !== '') {
+    const parsed = Number(priority);
+    if (Number.isFinite(parsed)) {
+      config.priority = parsed;
+    }
+  }
+  const prefix = normalizePrefix(record?.prefix ?? record?.['prefix']);
+  if (prefix) config.prefix = prefix;
+  const baseUrl = record ? record['base-url'] ?? record.baseUrl : undefined;
+  const proxyUrl = record ? record['proxy-url'] ?? record.proxyUrl : undefined;
+  if (baseUrl) config.baseUrl = String(baseUrl);
+  if (proxyUrl) config.proxyUrl = String(proxyUrl);
+  const headers = normalizeHeaders(record?.headers);
+  if (headers) config.headers = headers;
+  const models = normalizeModelAliases(record?.models);
+  if (models.length) config.models = models;
+  const excludedModels = normalizeExcludedModels(
+    record?.['excluded-models'] ??
+      record?.excludedModels ??
+      record?.['excluded_models'] ??
+      record?.excluded_models
+  );
+  if (excludedModels.length) config.excludedModels = excludedModels;
+  if (authIndex) config.authIndex = authIndex;
+  applyExtendedProviderConfig(config, record);
   if (apiKeyEntries.length) {
     config.apiKeyEntries = apiKeyEntries;
   }
@@ -524,6 +638,13 @@ export const normalizeConfigResponse = (raw: unknown): Config => {
       .filter(Boolean) as ProviderKeyConfig[];
   }
 
+  const tocodexList = raw['tocodex-api-key'] ?? raw.tocodexApiKey ?? raw.tocodexApiKeys;
+  if (Array.isArray(tocodexList)) {
+    config.tocodexApiKeys = tocodexList
+      .map((item) => normalizeToCodexKeyConfig(item))
+      .filter(Boolean) as ProviderKeyConfig[];
+  }
+
   const claudeList = raw['claude-api-key'] ?? raw.claudeApiKey ?? raw.claudeApiKeys;
   if (Array.isArray(claudeList)) {
     config.claudeApiKeys = claudeList
@@ -565,6 +686,7 @@ export {
   normalizeModelAliases,
   normalizeOpenAIProvider,
   normalizeProviderKeyConfig,
+  normalizeToCodexKeyConfig,
   normalizeHeaders,
   normalizeExcludedModels,
   normalizeAmpcodeConfig,

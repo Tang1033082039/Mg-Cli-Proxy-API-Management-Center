@@ -7,6 +7,7 @@ import {
   CodexSection,
   GeminiSection,
   OpenAISection,
+  ToCodexSection,
   VertexSection,
   ProviderNav,
   useProviderStats,
@@ -26,7 +27,14 @@ import styles from './AiProvidersPage.module.scss';
 const getCodexApiKeyEntries = (config: ProviderKeyConfig): ApiKeyEntry[] => {
   if (config.apiKeyEntries?.length) return config.apiKeyEntries;
   if (!config.apiKey) return [];
-  return [{ apiKey: config.apiKey, proxyUrl: config.proxyUrl, authIndex: config.authIndex }];
+  return [
+    {
+      apiKey: config.apiKey,
+      hmacSecret: config.hmacSecret,
+      proxyUrl: config.proxyUrl,
+      authIndex: config.authIndex,
+    },
+  ];
 };
 
 export function AiProvidersPage() {
@@ -51,6 +59,9 @@ export function AiProvidersPage() {
   );
   const [codexConfigs, setCodexConfigs] = useState<ProviderKeyConfig[]>(
     () => config?.codexApiKeys || []
+  );
+  const [tocodexConfigs, setToCodexConfigs] = useState<ProviderKeyConfig[]>(
+    () => config?.tocodexApiKeys || []
   );
   const [claudeConfigs, setClaudeConfigs] = useState<ProviderKeyConfig[]>(
     () => config?.claudeApiKeys || []
@@ -108,6 +119,7 @@ export function AiProvidersPage() {
       const data = configResult.value;
       setGeminiKeys(data?.geminiApiKeys || []);
       setCodexConfigs(data?.codexApiKeys || []);
+      setToCodexConfigs(data?.tocodexApiKeys || []);
       setClaudeConfigs(data?.claudeApiKeys || []);
       setVertexConfigs(data?.vertexApiKeys || []);
       setOpenaiProviders(data?.openaiCompatibility || []);
@@ -144,12 +156,14 @@ export function AiProvidersPage() {
   useEffect(() => {
     if (config?.geminiApiKeys) setGeminiKeys(config.geminiApiKeys);
     if (config?.codexApiKeys) setCodexConfigs(config.codexApiKeys);
+    if (config?.tocodexApiKeys) setToCodexConfigs(config.tocodexApiKeys);
     if (config?.claudeApiKeys) setClaudeConfigs(config.claudeApiKeys);
     if (config?.vertexApiKeys) setVertexConfigs(config.vertexApiKeys);
     if (config?.openaiCompatibility) setOpenaiProviders(config.openaiCompatibility);
   }, [
     config?.geminiApiKeys,
     config?.codexApiKeys,
+    config?.tocodexApiKeys,
     config?.claudeApiKeys,
     config?.vertexApiKeys,
     config?.openaiCompatibility,
@@ -363,6 +377,90 @@ export function AiProvidersPage() {
     }
   };
 
+  const setToCodexApiKeyEntryEnabled = async (
+    configIndex: number,
+    entryIndex: number,
+    enabled: boolean
+  ) => {
+    const current = tocodexConfigs[configIndex];
+    if (!current) return;
+    const entries = getCodexApiKeyEntries(current);
+    const targetEntry = entries[entryIndex];
+    if (!targetEntry) return;
+
+    const switchingKey = `tocodex:${configIndex}:${entryIndex}`;
+    setConfigSwitchingKey(switchingKey);
+
+    const previousList = tocodexConfigs;
+    const nextEntries = entries.map((entry, idx) =>
+      idx === entryIndex ? { ...entry, disabled: !enabled } : entry
+    );
+    const nextItem: ProviderKeyConfig = {
+      ...current,
+      apiKey: '',
+      hmacSecret: '',
+      apiKeyEntries: nextEntries,
+    };
+    const nextList = previousList.map((item, idx) => (idx === configIndex ? nextItem : item));
+
+    setToCodexConfigs(nextList);
+    updateConfigValue('tocodex-api-key', nextList);
+    clearCache('tocodex-api-key');
+
+    try {
+      await providersApi.updateToCodexApiKeyEntry(configIndex, entryIndex, {
+        disabled: !enabled,
+      });
+      showNotification(
+        enabled ? t('notification.config_enabled') : t('notification.config_disabled'),
+        'success'
+      );
+    } catch (err: unknown) {
+      const message = getErrorMessage(err);
+      setToCodexConfigs(previousList);
+      updateConfigValue('tocodex-api-key', previousList);
+      clearCache('tocodex-api-key');
+      showNotification(`${t('notification.update_failed')}: ${message}`, 'error');
+    } finally {
+      setConfigSwitchingKey(null);
+    }
+  };
+
+  const setToCodexConfigEnabled = async (index: number, enabled: boolean) => {
+    const current = tocodexConfigs[index];
+    if (!current) return;
+
+    const switchingKey = `tocodex:${index}:config`;
+    setConfigSwitchingKey(switchingKey);
+
+    const previousList = tocodexConfigs;
+    const nextExcluded = enabled
+      ? withoutDisableAllModelsRule(current.excludedModels)
+      : withDisableAllModelsRule(current.excludedModels);
+    const nextItem: ProviderKeyConfig = { ...current, excludedModels: nextExcluded };
+    const nextList = previousList.map((item, idx) => (idx === index ? nextItem : item));
+
+    setToCodexConfigs(nextList);
+    updateConfigValue('tocodex-api-key', nextList);
+    clearCache('tocodex-api-key');
+
+    try {
+      await providersApi.saveToCodexConfigs(nextList);
+      showNotification(
+        enabled ? t('notification.config_enabled') : t('notification.config_disabled'),
+        'success'
+      );
+    } catch (err: unknown) {
+      const message = getErrorMessage(err);
+      setToCodexConfigs(previousList);
+      updateConfigValue('tocodex-api-key', previousList);
+      clearCache('tocodex-api-key');
+      showNotification(`${t('notification.update_failed')}: ${message}`, 'error');
+    } finally {
+      setConfigSwitchingKey(null);
+    }
+  };
+
   const deleteProviderEntry = async (type: 'codex' | 'claude', index: number) => {
     const source = type === 'codex' ? codexConfigs : claudeConfigs;
     const entry = source[index];
@@ -389,6 +487,30 @@ export function AiProvidersPage() {
             clearCache('claude-api-key');
             showNotification(t('notification.claude_config_deleted'), 'success');
           }
+        } catch (err: unknown) {
+          const message = getErrorMessage(err);
+          showNotification(`${t('notification.delete_failed')}: ${message}`, 'error');
+        }
+      },
+    });
+  };
+
+  const deleteToCodex = async (index: number) => {
+    const entry = tocodexConfigs[index];
+    if (!entry) return;
+    showConfirmation({
+      title: t('ai_providers.tocodex_delete_title', { defaultValue: 'Delete ToCodex Config' }),
+      message: t('ai_providers.tocodex_delete_confirm'),
+      variant: 'danger',
+      confirmText: t('common.confirm'),
+      onConfirm: async () => {
+        try {
+          await providersApi.deleteToCodexConfigByIndex(index);
+          const next = tocodexConfigs.filter((_, idx) => idx !== index);
+          setToCodexConfigs(next);
+          updateConfigValue('tocodex-api-key', next);
+          clearCache('tocodex-api-key');
+          showNotification(t('notification.tocodex_config_deleted'), 'success');
         } catch (err: unknown) {
           const message = getErrorMessage(err);
           showNotification(`${t('notification.delete_failed')}: ${message}`, 'error');
@@ -482,6 +604,25 @@ export function AiProvidersPage() {
             onToggle={(index, enabled) => void setCodexConfigEnabled(index, enabled)}
             onToggleEntry={(configIndex, entryIndex, enabled) =>
               void setCodexApiKeyEntryEnabled(configIndex, entryIndex, enabled)
+            }
+          />
+        </div>
+
+        <div id="provider-tocodex">
+          <ToCodexSection
+            configs={tocodexConfigs}
+            keyStats={keyStats}
+            usageDetailsBySource={usageDetailsBySource}
+            usageDetailsByAuthIndex={usageDetailsByAuthIndex}
+            loading={loading}
+            disableControls={disableControls}
+            isSwitching={isSwitching}
+            onAdd={() => openEditor('/ai-providers/tocodex/new')}
+            onEdit={(index) => openEditor(`/ai-providers/tocodex/${index}`)}
+            onDelete={(index) => void deleteToCodex(index)}
+            onToggle={(index, enabled) => void setToCodexConfigEnabled(index, enabled)}
+            onToggleEntry={(configIndex, entryIndex, enabled) =>
+              void setToCodexApiKeyEntryEnabled(configIndex, entryIndex, enabled)
             }
           />
         </div>

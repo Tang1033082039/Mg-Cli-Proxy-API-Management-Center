@@ -341,6 +341,7 @@ export const getProviderConfigKey = (
   config: {
     authIndex?: unknown;
     apiKey?: string;
+    hmacSecret?: string;
     baseUrl?: string;
     proxyUrl?: string;
   },
@@ -350,7 +351,7 @@ export const getProviderConfigKey = (
   if (authIndexKey) {
     return authIndexKey;
   }
-  return `${config.apiKey ?? ''}::${config.baseUrl ?? ''}::${config.proxyUrl ?? ''}::${index}`;
+  return `${config.apiKey ?? ''}::${config.hmacSecret ?? ''}::${config.baseUrl ?? ''}::${config.proxyUrl ?? ''}::${index}`;
 };
 
 export const getOpenAIProviderKey = (provider: OpenAIProviderConfig, index: number): string => {
@@ -366,7 +367,7 @@ export const getOpenAIEntryKey = (entry: ApiKeyEntry, index: number): string => 
   if (authIndexKey) {
     return authIndexKey;
   }
-  return `${entry.apiKey}::${entry.proxyUrl ?? ''}::${index}`;
+  return `${entry.apiKey}::${entry.hmacSecret ?? ''}::${entry.proxyUrl ?? ''}::${index}`;
 };
 
 export const getCodexEntryKey = (entry: ApiKeyEntry, index: number): string =>
@@ -374,6 +375,7 @@ export const getCodexEntryKey = (entry: ApiKeyEntry, index: number): string =>
 
 export const buildApiKeyEntry = (input?: Partial<ApiKeyEntry>): ApiKeyEntry => ({
   apiKey: input?.apiKey ?? '',
+  hmacSecret: input?.hmacSecret ?? '',
   proxyUrl: input?.proxyUrl ?? '',
   authIndex: input?.authIndex,
   headers: input?.headers ?? {},

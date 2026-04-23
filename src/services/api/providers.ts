@@ -7,7 +7,8 @@ import {
   normalizeCodexKeyConfig,
   normalizeGeminiKeyConfig,
   normalizeOpenAIProvider,
-  normalizeProviderKeyConfig
+  normalizeProviderKeyConfig,
+  normalizeToCodexKeyConfig
 } from './transformers';
 import type {
   GeminiKeyConfig,
@@ -58,6 +59,7 @@ const serializeModelAliases = (models?: ModelAlias[]) =>
 
 const serializeApiKeyEntry = (entry: ApiKeyEntry) => {
   const payload: Record<string, unknown> = { 'api-key': entry.apiKey };
+  if (entry.hmacSecret) payload['hmac-secret'] = entry.hmacSecret;
   if (entry.proxyUrl) payload['proxy-url'] = entry.proxyUrl;
   const headers = serializeHeaders(entry.headers);
   if (headers) payload.headers = headers;
@@ -68,6 +70,7 @@ const serializeApiKeyEntry = (entry: ApiKeyEntry) => {
 const serializeApiKeyEntryPatch = (entry: Partial<ApiKeyEntry>) => {
   const payload: Record<string, unknown> = {};
   if (entry.apiKey !== undefined) payload['api-key'] = entry.apiKey;
+  if (entry.hmacSecret !== undefined) payload['hmac-secret'] = entry.hmacSecret;
   if (entry.proxyUrl !== undefined) payload['proxy-url'] = entry.proxyUrl;
   if (entry.disabled !== undefined) payload.disabled = entry.disabled;
   return payload;
@@ -75,11 +78,18 @@ const serializeApiKeyEntryPatch = (entry: Partial<ApiKeyEntry>) => {
 
 const serializeProviderKey = (config: ProviderKeyConfig) => {
   const payload: Record<string, unknown> = { 'api-key': config.apiKey };
+  if (config.hmacSecret) payload['hmac-secret'] = config.hmacSecret;
   if (config.priority !== undefined) payload.priority = config.priority;
   if (config.prefix?.trim()) payload.prefix = config.prefix.trim();
   if (config.baseUrl) payload['base-url'] = config.baseUrl;
   if (config.websockets !== undefined) payload.websockets = config.websockets;
   if (config.proxyUrl) payload['proxy-url'] = config.proxyUrl;
+  if (config.requestMode) payload['request-mode'] = config.requestMode;
+  if (config.chatPath) payload['chat-path'] = config.chatPath;
+  if (config.responsesPath) payload['responses-path'] = config.responsesPath;
+  if (config.responsesCompactPath) payload['responses-compact-path'] = config.responsesCompactPath;
+  if (config.modelsPath) payload['models-path'] = config.modelsPath;
+  if (config.testPath) payload['test-path'] = config.testPath;
   const headers = serializeHeaders(config.headers);
   if (headers) payload.headers = headers;
   const models = serializeModelAliases(config.models);
@@ -108,6 +118,7 @@ const serializeCodexKey = (config: ProviderKeyConfig) => {
     ? config.apiKeyEntries
         .map((entry) => ({
           apiKey: entry.apiKey.trim(),
+          hmacSecret: entry.hmacSecret?.trim() || undefined,
           proxyUrl: entry.proxyUrl?.trim() || undefined,
           disabled: entry.disabled === true,
         }))
@@ -227,6 +238,32 @@ export const providersApi = {
 
   deleteCodexConfigByIndex: (index: number) =>
     apiClient.delete(`/codex-api-key?index=${encodeURIComponent(String(index))}`),
+
+  async getToCodexConfigs(): Promise<ProviderKeyConfig[]> {
+    const data = await apiClient.get('/tocodex-api-key');
+    const list = extractArrayPayload(data, 'tocodex-api-key');
+    return list.map((item) => normalizeToCodexKeyConfig(item)).filter(Boolean) as ProviderKeyConfig[];
+  },
+
+  saveToCodexConfigs: (configs: ProviderKeyConfig[]) =>
+    apiClient.put('/tocodex-api-key', configs.map((item) => serializeCodexKey(item))),
+
+  updateToCodexConfig: (index: number, value: ProviderKeyConfig) =>
+    apiClient.patch('/tocodex-api-key', { index, value: serializeCodexKey(value) }),
+
+  updateToCodexApiKeyEntry: (
+    configIndex: number,
+    apiKeyIndex: number,
+    value: Partial<ApiKeyEntry>
+  ) =>
+    apiClient.patch('/tocodex-api-key', {
+      index: configIndex,
+      'api-key-index': apiKeyIndex,
+      'api-key-value': serializeApiKeyEntryPatch(value),
+    }),
+
+  deleteToCodexConfigByIndex: (index: number) =>
+    apiClient.delete(`/tocodex-api-key?index=${encodeURIComponent(String(index))}`),
 
   async getClaudeConfigs(): Promise<ProviderKeyConfig[]> {
     const data = await apiClient.get('/claude-api-key');
