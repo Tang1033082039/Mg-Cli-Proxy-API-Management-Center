@@ -92,6 +92,15 @@ export const buildOpenAIChatCompletionsEndpoint = (baseUrl: string): string => {
   return `${trimmed}/chat/completions`;
 };
 
+export const buildCodexResponsesCompactEndpoint = (baseUrl: string): string => {
+  const trimmed = normalizeOpenAIBaseUrl(baseUrl);
+  if (!trimmed) return '';
+  if (trimmed.endsWith('/responses/compact')) {
+    return trimmed;
+  }
+  return `${trimmed}/responses/compact`;
+};
+
 export const buildClaudeMessagesEndpoint = (baseUrl: string): string => {
   const trimmed = normalizeClaudeBaseUrl(baseUrl);
   if (!trimmed) return '';
@@ -366,6 +375,7 @@ export const getCodexEntryKey = (entry: ApiKeyEntry, index: number): string =>
 export const buildApiKeyEntry = (input?: Partial<ApiKeyEntry>): ApiKeyEntry => ({
   apiKey: input?.apiKey ?? '',
   proxyUrl: input?.proxyUrl ?? '',
+  authIndex: input?.authIndex,
   headers: input?.headers ?? {},
   disabled: input?.disabled === true,
 });

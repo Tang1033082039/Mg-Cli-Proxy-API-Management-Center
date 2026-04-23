@@ -7,18 +7,24 @@ import { Input } from '@/components/ui/Input';
 import { HeaderInputList } from '@/components/ui/HeaderInputList';
 import { ModelInputList } from '@/components/ui/ModelInputList';
 import { Modal } from '@/components/ui/Modal';
+import { Select } from '@/components/ui/Select';
 import { SelectionCheckbox } from '@/components/ui/SelectionCheckbox';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { useEdgeSwipeBack } from '@/hooks/useEdgeSwipeBack';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { SecondaryScreenShell } from '@/components/common/SecondaryScreenShell';
-import { modelsApi, providersApi } from '@/services/api';
+import { apiCallApi, getApiCallErrorMessage, modelsApi, providersApi } from '@/services/api';
 import { useAuthStore, useConfigStore, useNotificationStore } from '@/stores';
 import type { ApiKeyEntry, ProviderKeyConfig } from '@/types';
 import { buildHeaderObject, headersToEntries, normalizeHeaderEntries } from '@/utils/headers';
 import { areKeyValueEntriesEqual, areModelEntriesEqual, areStringArraysEqual } from '@/utils/compare';
 import { entriesToModels, modelsToEntries } from '@/components/ui/modelInputListUtils';
-import { buildApiKeyEntry, excludedModelsToText, parseExcludedModels } from '@/components/providers/utils';
+import {
+  buildApiKeyEntry,
+  buildCodexResponsesCompactEndpoint,
+  excludedModelsToText,
+  parseExcludedModels,
+} from '@/components/providers/utils';
 import type { ProviderFormState } from '@/components/providers';
 import type { ModelInfo } from '@/utils/models';
 import layoutStyles from './AiProvidersEditLayout.module.scss';
@@ -29,6 +35,18 @@ type LocationState = { fromAiProviders?: boolean } | null;
 type CodexFormState = ProviderFormState & {
   apiKeyEntries: ApiKeyEntry[];
 };
+
+type CodexKeyTestStatus = {
+  status: 'idle' | 'loading' | 'success' | 'error';
+  message: string;
+};
+
+const CODEX_TEST_TIMEOUT_MS = 30_000;
+const CODEX_TEST_USER_AGENT =
+  'codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)';
+
+const buildKeyTestStatuses = (count: number): CodexKeyTestStatus[] =>
+  Array.from({ length: Math.max(count, 1) }, () => ({ status: 'idle', message: '' }));
 
 const buildEmptyForm = (): CodexFormState => ({
   apiKey: '',
@@ -56,6 +74,66 @@ const getErrorMessage = (err: unknown) => {
   if (typeof err === 'string') return err;
   return '';
 };
+
+function StatusLoadingIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className={styles.statusIconSpin}>
+      <circle cx="8" cy="8" r="7" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2" />
+      <path d="M8 1A7 7 0 0 1 8 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function StatusSuccessIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <circle cx="8" cy="8" r="8" fill="var(--success-color, #22c55e)" />
+      <path
+        d="M4.5 8L7 10.5L11.5 6"
+        stroke="white"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function StatusErrorIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <circle cx="8" cy="8" r="8" fill="var(--danger-color, #c65746)" />
+      <path
+        d="M5 5L11 11M11 5L5 11"
+        stroke="white"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function StatusIdleIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <circle cx="8" cy="8" r="7" stroke="var(--text-tertiary, #9ca3af)" strokeWidth="2" />
+    </svg>
+  );
+}
+
+function StatusIcon({ status }: { status: CodexKeyTestStatus['status'] }) {
+  switch (status) {
+    case 'loading':
+      return <StatusLoadingIcon />;
+    case 'success':
+      return <StatusSuccessIcon />;
+    case 'error':
+      return <StatusErrorIcon />;
+    default:
+      return <StatusIdleIcon />;
+  }
+}
 
 const normalizeModelEntries = (entries: Array<{ name: string; alias: string }>) =>
   (entries ?? []).reduce<Array<{ name: string; alias: string }>>((acc, entry) => {
@@ -106,13 +184,14 @@ const codexConfigToApiKeyEntries = (config: ProviderKeyConfig): ApiKeyEntry[] =>
   const entries = config.apiKeyEntries?.length
     ? config.apiKeyEntries
     : config.apiKey
-      ? [buildApiKeyEntry({ apiKey: config.apiKey })]
+      ? [buildApiKeyEntry({ apiKey: config.apiKey, proxyUrl: config.proxyUrl, authIndex: config.authIndex })]
       : [];
   return entries.length
     ? entries.map((entry) =>
         buildApiKeyEntry({
           apiKey: entry.apiKey,
           proxyUrl: entry.proxyUrl,
+          authIndex: entry.authIndex,
           disabled: entry.disabled,
         })
       )
@@ -164,6 +243,13 @@ export function AiProvidersCodexEditPage() {
   const [error, setError] = useState('');
   const [form, setForm] = useState<CodexFormState>(() => buildEmptyForm());
   const [baseline, setBaseline] = useState(() => buildCodexBaseline(buildEmptyForm()));
+  const [testModel, setTestModel] = useState('');
+  const [testStatus, setTestStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [testMessage, setTestMessage] = useState('');
+  const [isTestingKeys, setIsTestingKeys] = useState(false);
+  const [keyTestStatuses, setKeyTestStatuses] = useState<CodexKeyTestStatus[]>(() =>
+    buildKeyTestStatuses(1)
+  );
 
   const [modelDiscoveryOpen, setModelDiscoveryOpen] = useState(false);
   const [modelDiscoveryEndpoint, setModelDiscoveryEndpoint] = useState('');
@@ -251,11 +337,17 @@ export function AiProvidersCodexEditPage() {
       };
       setForm(nextForm);
       setBaseline(buildCodexBaseline(nextForm));
+      setTestStatus('idle');
+      setTestMessage('');
+      setKeyTestStatuses(buildKeyTestStatuses(nextForm.apiKeyEntries.length));
       return;
     }
     const nextForm = buildEmptyForm();
     setForm(nextForm);
     setBaseline(buildCodexBaseline(nextForm));
+    setTestStatus('idle');
+    setTestMessage('');
+    setKeyTestStatuses(buildKeyTestStatuses(nextForm.apiKeyEntries.length));
   }, [initialData, loading]);
 
   const normalizedHeaders = useMemo(() => normalizeHeaderEntries(form.headers), [form.headers]);
@@ -317,7 +409,8 @@ export function AiProvidersCodexEditPage() {
     },
   });
 
-  const canSave = !disableControls && !saving && !loading && !invalidIndexParam && !invalidIndex;
+  const canSave =
+    !disableControls && !saving && !loading && !invalidIndexParam && !invalidIndex && !isTestingKeys;
 
   const discoveredModelsFiltered = useMemo(() => {
     const filter = modelDiscoverySearch.trim().toLowerCase();
@@ -345,6 +438,83 @@ export function AiProvidersCodexEditPage() {
       form.apiKey.trim(),
     [form.apiKey, form.apiKeyEntries]
   );
+  const availableModels = useMemo(
+    () => form.modelEntries.map((entry) => entry.name.trim()).filter(Boolean),
+    [form.modelEntries]
+  );
+  const modelSelectOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return form.modelEntries.reduce<Array<{ value: string; label: string }>>((acc, entry) => {
+      const name = entry.name.trim();
+      if (!name || seen.has(name)) return acc;
+      seen.add(name);
+      const alias = entry.alias.trim();
+      acc.push({
+        value: name,
+        label: alias && alias !== name ? `${name} (${alias})` : name,
+      });
+      return acc;
+    }, []);
+  }, [form.modelEntries]);
+  const hasConfiguredModels = availableModels.length > 0;
+  const hasTestableKeys = form.apiKeyEntries.some((entry) => entry.apiKey?.trim());
+  const failedKeyIndexes = useMemo(
+    () =>
+      keyTestStatuses.reduce<number[]>((acc, status, index) => {
+        if (status?.status === 'error' && form.apiKeyEntries[index]?.apiKey?.trim()) {
+          acc.push(index);
+        }
+        return acc;
+      }, []),
+    [form.apiKeyEntries, keyTestStatuses]
+  );
+  const connectivityConfigSignature = useMemo(() => {
+    const headersSignature = form.headers
+      .map((entry) => `${entry.key.trim()}:${entry.value.trim()}`)
+      .join('|');
+    const modelsSignature = form.modelEntries
+      .map((entry) => `${entry.name.trim()}:${entry.alias.trim()}`)
+      .join('|');
+    return [form.baseUrl.trim(), form.proxyUrl?.trim() || '', testModel.trim(), headersSignature, modelsSignature].join(
+      '||'
+    );
+  }, [form.baseUrl, form.headers, form.modelEntries, form.proxyUrl, testModel]);
+  const previousConnectivityConfigRef = useRef(connectivityConfigSignature);
+
+  useEffect(() => {
+    setKeyTestStatuses(buildKeyTestStatuses(form.apiKeyEntries.length));
+  }, [form.apiKeyEntries.length]);
+
+  useEffect(() => {
+    if (previousConnectivityConfigRef.current === connectivityConfigSignature) {
+      return;
+    }
+    previousConnectivityConfigRef.current = connectivityConfigSignature;
+    setKeyTestStatuses(buildKeyTestStatuses(form.apiKeyEntries.length));
+    setTestStatus('idle');
+    setTestMessage('');
+  }, [connectivityConfigSignature, form.apiKeyEntries.length]);
+
+  useEffect(() => {
+    if (testModel && availableModels.includes(testModel)) {
+      return;
+    }
+    setTestModel(availableModels[0] || '');
+  }, [availableModels, testModel]);
+
+  const setKeyTestStatus = useCallback((index: number, nextStatus: CodexKeyTestStatus) => {
+    setKeyTestStatuses((prev) => {
+      const next = prev.length === form.apiKeyEntries.length ? [...prev] : buildKeyTestStatuses(form.apiKeyEntries.length);
+      next[index] = nextStatus;
+      return next;
+    });
+  }, [form.apiKeyEntries.length]);
+
+  const resetTestState = useCallback((count?: number) => {
+    setKeyTestStatuses(buildKeyTestStatuses(count ?? form.apiKeyEntries.length));
+    setTestStatus('idle');
+    setTestMessage('');
+  }, [form.apiKeyEntries.length]);
 
   const mergeDiscoveredModels = useCallback(
     (selectedModels: ModelInfo[]) => {
@@ -384,6 +554,227 @@ export function AiProvidersCodexEditPage() {
     },
     [setForm, showNotification, t]
   );
+
+  const runSingleKeyTest = useCallback(
+    async (keyIndex: number): Promise<boolean> => {
+      const baseUrl = form.baseUrl.trim();
+      if (!baseUrl) {
+        showNotification(t('notification.codex_test_url_required'), 'error');
+        return false;
+      }
+
+      const endpoint = buildCodexResponsesCompactEndpoint(baseUrl);
+      if (!endpoint) {
+        showNotification(t('notification.codex_test_url_required'), 'error');
+        return false;
+      }
+
+      const keyEntry = form.apiKeyEntries[keyIndex];
+      if (!keyEntry?.apiKey?.trim()) {
+        setKeyTestStatus(keyIndex, {
+          status: 'error',
+          message: t('notification.codex_test_key_required'),
+        });
+        return false;
+      }
+
+      const modelName = testModel.trim() || availableModels[0] || '';
+      if (!modelName) {
+        showNotification(t('notification.codex_test_model_required'), 'error');
+        return false;
+      }
+
+      const customHeaders = buildHeaderObject(form.headers);
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Connection: 'Keep-Alive',
+        ...customHeaders,
+      };
+      if (!Object.keys(headers).some((key) => key.toLowerCase() === 'authorization')) {
+        headers.Authorization = `Bearer ${keyEntry.apiKey.trim()}`;
+      }
+      if (!Object.keys(headers).some((key) => key.toLowerCase() === 'user-agent')) {
+        headers['User-Agent'] = CODEX_TEST_USER_AGENT;
+      }
+
+      setKeyTestStatus(keyIndex, { status: 'loading', message: '' });
+
+      try {
+        const result = await apiCallApi.request(
+          {
+            method: 'POST',
+            url: endpoint,
+            proxyUrl: keyEntry.proxyUrl?.trim() || form.proxyUrl?.trim() || undefined,
+            header: headers,
+            data: JSON.stringify({
+              model: modelName,
+              input: 'Hi',
+            }),
+          },
+          { timeout: CODEX_TEST_TIMEOUT_MS }
+        );
+
+        if (result.statusCode < 200 || result.statusCode >= 300) {
+          throw new Error(getApiCallErrorMessage(result));
+        }
+
+        setKeyTestStatus(keyIndex, { status: 'success', message: '' });
+        return true;
+      } catch (err: unknown) {
+        const message = getErrorMessage(err);
+        const errorCode =
+          typeof err === 'object' && err !== null && 'code' in err
+            ? String((err as { code?: string }).code)
+            : '';
+        const isTimeout = errorCode === 'ECONNABORTED' || message.toLowerCase().includes('timeout');
+        setKeyTestStatus(keyIndex, {
+          status: 'error',
+          message: isTimeout
+            ? t('ai_providers.codex_test_timeout', { seconds: CODEX_TEST_TIMEOUT_MS / 1000 })
+            : message,
+        });
+        return false;
+      }
+    },
+    [availableModels, form.apiKeyEntries, form.baseUrl, form.headers, form.proxyUrl, setKeyTestStatus, showNotification, t, testModel]
+  );
+
+  const testSingleKey = useCallback(
+    async (keyIndex: number): Promise<boolean> => {
+      if (isTestingKeys) return false;
+      setIsTestingKeys(true);
+      setTestStatus('loading');
+      setTestMessage(t('ai_providers.codex_test_running'));
+      try {
+        const passed = await runSingleKeyTest(keyIndex);
+        if (passed) {
+          setTestStatus('success');
+          setTestMessage(t('ai_providers.codex_test_success'));
+        } else {
+          setTestStatus('error');
+          setTestMessage(t('ai_providers.codex_test_failed'));
+        }
+        return passed;
+      } finally {
+        setIsTestingKeys(false);
+      }
+    },
+    [isTestingKeys, runSingleKeyTest, t]
+  );
+
+  const testAllKeys = useCallback(async () => {
+    if (isTestingKeys) return;
+
+    const baseUrl = form.baseUrl.trim();
+    if (!baseUrl) {
+      const message = t('notification.codex_test_url_required');
+      setTestStatus('error');
+      setTestMessage(message);
+      showNotification(message, 'error');
+      return;
+    }
+
+    const endpoint = buildCodexResponsesCompactEndpoint(baseUrl);
+    if (!endpoint) {
+      const message = t('notification.codex_test_url_required');
+      setTestStatus('error');
+      setTestMessage(message);
+      showNotification(message, 'error');
+      return;
+    }
+
+    const modelName = testModel.trim() || availableModels[0] || '';
+    if (!modelName) {
+      const message = t('notification.codex_test_model_required');
+      setTestStatus('error');
+      setTestMessage(message);
+      showNotification(message, 'error');
+      return;
+    }
+
+    const validKeyIndexes = form.apiKeyEntries
+      .map((entry, index) => (entry.apiKey?.trim() ? index : -1))
+      .filter((index) => index >= 0);
+    if (validKeyIndexes.length === 0) {
+      const message = t('notification.codex_test_key_required');
+      setTestStatus('error');
+      setTestMessage(message);
+      showNotification(message, 'error');
+      return;
+    }
+
+    setIsTestingKeys(true);
+    setTestStatus('loading');
+    setTestMessage(t('ai_providers.codex_test_running'));
+    setKeyTestStatuses(buildKeyTestStatuses(form.apiKeyEntries.length));
+
+    try {
+      const results = await Promise.all(validKeyIndexes.map((index) => runSingleKeyTest(index)));
+      const successCount = results.filter(Boolean).length;
+      const failedCount = validKeyIndexes.length - successCount;
+
+      if (failedCount === 0) {
+        const message = t('ai_providers.codex_test_all_success', { count: successCount });
+        setTestStatus('success');
+        setTestMessage(message);
+        showNotification(message, 'success');
+      } else if (successCount === 0) {
+        const message = t('ai_providers.codex_test_all_failed', { count: failedCount });
+        setTestStatus('error');
+        setTestMessage(message);
+        showNotification(message, 'error');
+      } else {
+        const message = t('ai_providers.codex_test_all_partial', {
+          success: successCount,
+          failed: failedCount,
+        });
+        setTestStatus('error');
+        setTestMessage(message);
+        showNotification(message, 'warning');
+      }
+    } finally {
+      setIsTestingKeys(false);
+    }
+  }, [availableModels, form.apiKeyEntries, form.baseUrl, isTestingKeys, runSingleKeyTest, showNotification, t, testModel]);
+
+  const disableFailedKeys = useCallback(() => {
+    if (!failedKeyIndexes.length) return;
+    setForm((prev) => ({
+      ...prev,
+      apiKeyEntries: prev.apiKeyEntries.map((entry, index) =>
+        failedKeyIndexes.includes(index) ? { ...entry, disabled: true } : entry
+      ),
+    }));
+    setTestStatus('idle');
+    setTestMessage('');
+    showNotification(
+      t('notification.codex_failed_keys_disabled', { count: failedKeyIndexes.length }),
+      'success'
+    );
+  }, [failedKeyIndexes, showNotification, t]);
+
+  const removeFailedKeys = useCallback(() => {
+    if (!failedKeyIndexes.length) return;
+    const failedSet = new Set(failedKeyIndexes);
+    setForm((prev) => {
+      const nextEntries = prev.apiKeyEntries.filter((_, index) => !failedSet.has(index));
+      return {
+        ...prev,
+        apiKeyEntries: nextEntries.length ? nextEntries : [buildApiKeyEntry()],
+      };
+    });
+    setKeyTestStatuses((prev) => {
+      const nextStatuses = prev.filter((_, index) => !failedSet.has(index));
+      return nextStatuses.length ? nextStatuses : buildKeyTestStatuses(1);
+    });
+    setTestStatus('idle');
+    setTestMessage('');
+    showNotification(
+      t('notification.codex_failed_keys_removed', { count: failedKeyIndexes.length }),
+      'success'
+    );
+  }, [failedKeyIndexes, showNotification, t]);
 
   const fetchCodexModelDiscovery = useCallback(async () => {
     const requestId = (modelDiscoveryRequestIdRef.current += 1);
@@ -545,8 +936,25 @@ export function AiProvidersCodexEditPage() {
           : [...configs, payload];
 
       await providersApi.saveCodexConfigs(nextList);
-      updateConfigValue('codex-api-key', nextList);
-      clearCache('codex-api-key');
+
+      let syncedConfigs = nextList;
+      let refreshed = false;
+      try {
+        const latest = await fetchConfig('codex-api-key', true);
+        if (Array.isArray(latest)) {
+          syncedConfigs = latest as ProviderKeyConfig[];
+          refreshed = true;
+        }
+      } catch {
+        // 保存成功后刷新失败时，回退到本地计算结果，避免列表状态丢失
+      }
+
+      if (!refreshed) {
+        updateConfigValue('codex-api-key', syncedConfigs);
+        clearCache('codex-api-key');
+      }
+
+      setConfigs(syncedConfigs);
       showNotification(
         editIndex !== null
           ? t('notification.codex_config_updated')
@@ -566,6 +974,7 @@ export function AiProvidersCodexEditPage() {
   }, [
     allowNextNavigation,
     canSave,
+    fetchConfig,
     clearCache,
     configs,
     editIndex,
@@ -579,19 +988,34 @@ export function AiProvidersCodexEditPage() {
   const canOpenModelDiscovery =
     !disableControls &&
     !saving &&
+    !isTestingKeys &&
     !loading &&
     !invalidIndexParam &&
     !invalidIndex &&
     Boolean((form.baseUrl ?? '').trim());
   const canApplyModelDiscovery =
-    !disableControls && !saving && !modelDiscoveryFetching && modelDiscoverySelected.size > 0;
+    !disableControls &&
+    !saving &&
+    !isTestingKeys &&
+    !modelDiscoveryFetching &&
+    modelDiscoverySelected.size > 0;
 
   const renderKeyEntries = (entries: ApiKeyEntry[]) => {
     const list = entries.length ? entries : [buildApiKeyEntry()];
+    const tableLayoutStyle = {
+      gridTemplateColumns:
+        '46px 56px 72px minmax(220px, 1.4fr) minmax(200px, 1.1fr) 180px',
+      minWidth: '860px',
+    } as const;
 
     const updateEntry = (idx: number, field: 'apiKey' | 'proxyUrl', value: string) => {
-      const next = list.map((entry, i) => (i === idx ? { ...entry, [field]: value } : entry));
+      const next = list.map((entry, i) =>
+        i === idx ? { ...entry, [field]: value, authIndex: undefined } : entry
+      );
       setForm((prev) => ({ ...prev, apiKeyEntries: next }));
+      setKeyTestStatus(idx, { status: 'idle', message: '' });
+      setTestStatus('idle');
+      setTestMessage('');
     };
 
     const setEntryEnabled = (idx: number, enabled: boolean) => {
@@ -607,10 +1031,12 @@ export function AiProvidersCodexEditPage() {
         ...prev,
         apiKeyEntries: next.length ? next : [buildApiKeyEntry()],
       }));
+      resetTestState(next.length);
     };
 
     const addEntry = () => {
       setForm((prev) => ({ ...prev, apiKeyEntries: [...list, buildApiKeyEntry()] }));
+      resetTestState(list.length + 1);
     };
 
     return (
@@ -623,63 +1049,87 @@ export function AiProvidersCodexEditPage() {
             variant="secondary"
             size="sm"
             onClick={addEntry}
-            disabled={saving || disableControls}
+            disabled={saving || disableControls || isTestingKeys}
             className={styles.addKeyButton}
           >
             {t('ai_providers.codex_keys_add_btn')}
           </Button>
         </div>
         <div className={styles.keyTableShell}>
-          <div className={styles.keyTableHeader}>
+          <div className={styles.keyTableHeader} style={tableLayoutStyle}>
             <div className={styles.keyTableColIndex}>#</div>
+            <div className={styles.keyTableColStatus}>{t('common.status')}</div>
             <div className={styles.keyTableColStatus}>{t('ai_providers.config_toggle_label')}</div>
             <div className={styles.keyTableColKey}>{t('common.api_key')}</div>
             <div className={styles.keyTableColProxy}>{t('common.proxy_url')}</div>
             <div className={styles.keyTableColAction}>{t('common.action')}</div>
           </div>
-          {list.map((entry, index) => (
-            <div key={index} className={styles.keyTableRow}>
-              <div className={styles.keyTableColIndex}>{index + 1}</div>
-              <div className={styles.keyTableColStatus}>
-                <ToggleSwitch
-                  checked={entry.disabled !== true}
-                  onChange={(enabled) => setEntryEnabled(index, enabled)}
-                  disabled={saving || disableControls}
-                  ariaLabel={`${t('ai_providers.config_toggle_label')} ${index + 1}`}
-                />
+          {list.map((entry, index) => {
+            const keyStatus = keyTestStatuses[index] ?? { status: 'idle', message: '' };
+            const modelName = testModel.trim() || availableModels[0] || '';
+            const canTestKey = Boolean(entry.apiKey?.trim()) && Boolean(form.baseUrl.trim()) && Boolean(modelName);
+
+            return (
+              <div key={index} className={styles.keyTableRow} style={tableLayoutStyle}>
+                <div className={styles.keyTableColIndex}>{index + 1}</div>
+                <div className={styles.keyTableColStatus}>
+                  <span
+                    className={styles.statusIconWrapper}
+                    title={keyStatus.message || undefined}
+                  >
+                    <StatusIcon status={keyStatus.status} />
+                  </span>
+                </div>
+                <div className={styles.keyTableColStatus}>
+                  <ToggleSwitch
+                    checked={entry.disabled !== true}
+                    onChange={(enabled) => setEntryEnabled(index, enabled)}
+                    disabled={saving || disableControls || isTestingKeys}
+                    ariaLabel={`${t('ai_providers.config_toggle_label')} ${index + 1}`}
+                  />
+                </div>
+                <div className={styles.keyTableColKey}>
+                  <input
+                    type="text"
+                    value={entry.apiKey}
+                    onChange={(e) => updateEntry(index, 'apiKey', e.target.value)}
+                    disabled={saving || disableControls || isTestingKeys}
+                    className={`input ${styles.keyTableInput}`}
+                    placeholder={t('ai_providers.codex_add_modal_key_placeholder')}
+                  />
+                </div>
+                <div className={styles.keyTableColProxy}>
+                  <input
+                    type="text"
+                    value={entry.proxyUrl ?? ''}
+                    onChange={(e) => updateEntry(index, 'proxyUrl', e.target.value)}
+                    disabled={saving || disableControls || isTestingKeys}
+                    className={`input ${styles.keyTableInput}`}
+                    placeholder={t('ai_providers.codex_add_modal_proxy_placeholder')}
+                  />
+                </div>
+                <div className={styles.keyTableColAction}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void testSingleKey(index)}
+                    disabled={saving || disableControls || isTestingKeys || !canTestKey}
+                    loading={keyStatus.status === 'loading'}
+                  >
+                    {t('ai_providers.codex_test_single_action')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => removeEntry(index)}
+                    disabled={saving || disableControls || isTestingKeys || list.length <= 1}
+                  >
+                    {t('common.delete')}
+                  </Button>
+                </div>
               </div>
-              <div className={styles.keyTableColKey}>
-                <input
-                  type="text"
-                  value={entry.apiKey}
-                  onChange={(e) => updateEntry(index, 'apiKey', e.target.value)}
-                  disabled={saving || disableControls}
-                  className={`input ${styles.keyTableInput}`}
-                  placeholder={t('ai_providers.codex_add_modal_key_placeholder')}
-                />
-              </div>
-              <div className={styles.keyTableColProxy}>
-                <input
-                  type="text"
-                  value={entry.proxyUrl ?? ''}
-                  onChange={(e) => updateEntry(index, 'proxyUrl', e.target.value)}
-                  disabled={saving || disableControls}
-                  className={`input ${styles.keyTableInput}`}
-                  placeholder={t('ai_providers.codex_add_modal_proxy_placeholder')}
-                />
-              </div>
-              <div className={styles.keyTableColAction}>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => removeEntry(index)}
-                  disabled={saving || disableControls || list.length <= 1}
-                >
-                  {t('common.delete')}
-                </Button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     );
@@ -725,17 +1175,6 @@ export function AiProvidersCodexEditPage() {
           <div className="hint">{t('common.invalid_provider_index')}</div>
         ) : (
           <>
-            <div className={styles.keyEntriesSection}>
-              <div className={styles.keyEntriesHeader}>
-                <label className={styles.keyEntriesTitle}>
-                  {t('ai_providers.codex_keys_label')}
-                </label>
-                <span className={styles.keyEntriesHint}>
-                  {t('ai_providers.codex_keys_hint')}
-                </span>
-              </div>
-              {renderKeyEntries(form.apiKeyEntries)}
-            </div>
             <Input
               label={t('ai_providers.priority_label')}
               hint={t('ai_providers.priority_hint')}
@@ -750,7 +1189,7 @@ export function AiProvidersCodexEditPage() {
                   priority: parsed !== undefined && Number.isFinite(parsed) ? parsed : undefined,
                 }));
               }}
-              disabled={disableControls || saving}
+              disabled={disableControls || saving || isTestingKeys}
             />
             <Input
               label={t('ai_providers.prefix_label')}
@@ -758,20 +1197,20 @@ export function AiProvidersCodexEditPage() {
               value={form.prefix ?? ''}
               onChange={(e) => setForm((prev) => ({ ...prev, prefix: e.target.value }))}
               hint={t('ai_providers.prefix_hint')}
-              disabled={disableControls || saving}
+              disabled={disableControls || saving || isTestingKeys}
             />
             <Input
               label={t('ai_providers.codex_add_modal_url_label')}
               value={form.baseUrl ?? ''}
               onChange={(e) => setForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
-              disabled={disableControls || saving}
+              disabled={disableControls || saving || isTestingKeys}
             />
             <div className="form-group">
               <label>{t('ai_providers.codex_websockets_label')}</label>
               <ToggleSwitch
                 checked={Boolean(form.websockets)}
                 onChange={(value) => setForm((prev) => ({ ...prev, websockets: value }))}
-                disabled={disableControls || saving}
+                disabled={disableControls || saving || isTestingKeys}
                 ariaLabel={t('ai_providers.codex_websockets_label')}
               />
               <div className="hint">{t('ai_providers.codex_websockets_hint')}</div>
@@ -780,7 +1219,7 @@ export function AiProvidersCodexEditPage() {
               label={t('ai_providers.codex_add_modal_proxy_label')}
               value={form.proxyUrl ?? ''}
               onChange={(e) => setForm((prev) => ({ ...prev, proxyUrl: e.target.value }))}
-              disabled={disableControls || saving}
+              disabled={disableControls || saving || isTestingKeys}
             />
             <HeaderInputList
               entries={form.headers}
@@ -790,7 +1229,7 @@ export function AiProvidersCodexEditPage() {
               valuePlaceholder={t('common.custom_headers_value_placeholder')}
               removeButtonTitle={t('common.delete')}
               removeButtonAriaLabel={t('common.delete')}
-              disabled={disableControls || saving}
+              disabled={disableControls || saving || isTestingKeys}
             />
 
             <div className={styles.modelConfigSection}>
@@ -808,7 +1247,7 @@ export function AiProvidersCodexEditPage() {
                         modelEntries: [...prev.modelEntries, { name: '', alias: '' }],
                       }))
                     }
-                    disabled={disableControls || saving}
+                    disabled={disableControls || saving || isTestingKeys}
                   >
                     {t('ai_providers.codex_models_add_btn')}
                   </Button>
@@ -829,7 +1268,7 @@ export function AiProvidersCodexEditPage() {
                 onChange={(entries) => setForm((prev) => ({ ...prev, modelEntries: entries }))}
                 namePlaceholder={t('common.model_name_placeholder')}
                 aliasPlaceholder={t('common.model_alias_placeholder')}
-                disabled={disableControls || saving}
+                disabled={disableControls || saving || isTestingKeys}
                 hideAddButton
                 className={styles.modelInputList}
                 rowClassName={styles.modelInputRow}
@@ -839,6 +1278,95 @@ export function AiProvidersCodexEditPage() {
                 removeButtonAriaLabel={t('common.delete')}
               />
             </div>
+            <div className={styles.modelTestPanel}>
+              <div className={styles.modelTestMeta}>
+                <label className={styles.modelTestLabel}>{t('ai_providers.codex_test_title')}</label>
+                <span className={styles.modelTestHint}>{t('ai_providers.codex_test_hint')}</span>
+              </div>
+              <div className={styles.modelTestControls}>
+                <Select
+                  value={testModel}
+                  options={modelSelectOptions}
+                  onChange={(value) => {
+                    setTestModel(value);
+                    setTestStatus('idle');
+                    setTestMessage('');
+                  }}
+                  placeholder={
+                    hasConfiguredModels
+                      ? t('ai_providers.codex_test_select_placeholder')
+                      : t('ai_providers.codex_test_select_empty')
+                  }
+                  className={styles.openaiTestSelect}
+                  ariaLabel={t('ai_providers.codex_test_title')}
+                  disabled={
+                    saving ||
+                    disableControls ||
+                    isTestingKeys ||
+                    testStatus === 'loading' ||
+                    !hasConfiguredModels
+                  }
+                />
+                <Button
+                  variant={testStatus === 'error' ? 'danger' : 'secondary'}
+                  size="sm"
+                  onClick={() => void testAllKeys()}
+                  loading={testStatus === 'loading'}
+                  disabled={
+                    saving ||
+                    disableControls ||
+                    isTestingKeys ||
+                    testStatus === 'loading' ||
+                    !hasConfiguredModels ||
+                    !hasTestableKeys
+                  }
+                  title={t('ai_providers.codex_test_all_hint')}
+                  className={styles.modelTestAllButton}
+                >
+                  {t('ai_providers.codex_test_all_action')}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={disableFailedKeys}
+                  disabled={saving || disableControls || isTestingKeys || failedKeyIndexes.length === 0}
+                >
+                  {t('ai_providers.codex_disable_failed_action')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={removeFailedKeys}
+                  disabled={saving || disableControls || isTestingKeys || failedKeyIndexes.length === 0}
+                >
+                  {t('ai_providers.codex_remove_failed_action')}
+                </Button>
+              </div>
+            </div>
+            {testMessage && (
+              <div
+                className={`status-badge ${
+                  testStatus === 'error'
+                    ? 'error'
+                    : testStatus === 'success'
+                      ? 'success'
+                      : 'muted'
+                }`}
+              >
+                {testMessage}
+              </div>
+            )}
+            <div className={styles.keyEntriesSection}>
+              <div className={styles.keyEntriesHeader}>
+                <label className={styles.keyEntriesTitle}>
+                  {t('ai_providers.codex_keys_label')}
+                </label>
+                <span className={styles.keyEntriesHint}>
+                  {t('ai_providers.codex_keys_hint')}
+                </span>
+              </div>
+              {renderKeyEntries(form.apiKeyEntries)}
+            </div>
             <div className="form-group">
               <label>{t('ai_providers.excluded_models_label')}</label>
               <textarea
@@ -847,7 +1375,7 @@ export function AiProvidersCodexEditPage() {
                 value={form.excludedText}
                 onChange={(e) => setForm((prev) => ({ ...prev, excludedText: e.target.value }))}
                 rows={4}
-                disabled={disableControls || saving}
+                disabled={disableControls || saving || isTestingKeys}
               />
               <div className="hint">{t('ai_providers.excluded_models_hint')}</div>
             </div>

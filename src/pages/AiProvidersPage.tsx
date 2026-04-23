@@ -328,6 +328,41 @@ export function AiProvidersPage() {
     }
   };
 
+  const setCodexConfigEnabled = async (index: number, enabled: boolean) => {
+    const current = codexConfigs[index];
+    if (!current) return;
+
+    const switchingKey = `codex:${index}:config`;
+    setConfigSwitchingKey(switchingKey);
+
+    const previousList = codexConfigs;
+    const nextExcluded = enabled
+      ? withoutDisableAllModelsRule(current.excludedModels)
+      : withDisableAllModelsRule(current.excludedModels);
+    const nextItem: ProviderKeyConfig = { ...current, excludedModels: nextExcluded };
+    const nextList = previousList.map((item, idx) => (idx === index ? nextItem : item));
+
+    setCodexConfigs(nextList);
+    updateConfigValue('codex-api-key', nextList);
+    clearCache('codex-api-key');
+
+    try {
+      await providersApi.saveCodexConfigs(nextList);
+      showNotification(
+        enabled ? t('notification.config_enabled') : t('notification.config_disabled'),
+        'success'
+      );
+    } catch (err: unknown) {
+      const message = getErrorMessage(err);
+      setCodexConfigs(previousList);
+      updateConfigValue('codex-api-key', previousList);
+      clearCache('codex-api-key');
+      showNotification(`${t('notification.update_failed')}: ${message}`, 'error');
+    } finally {
+      setConfigSwitchingKey(null);
+    }
+  };
+
   const deleteProviderEntry = async (type: 'codex' | 'claude', index: number) => {
     const source = type === 'codex' ? codexConfigs : claudeConfigs;
     const entry = source[index];
@@ -444,6 +479,7 @@ export function AiProvidersPage() {
             onAdd={() => openEditor('/ai-providers/codex/new')}
             onEdit={(index) => openEditor(`/ai-providers/codex/${index}`)}
             onDelete={(index) => void deleteProviderEntry('codex', index)}
+            onToggle={(index, enabled) => void setCodexConfigEnabled(index, enabled)}
             onToggleEntry={(configIndex, entryIndex, enabled) =>
               void setCodexApiKeyEntryEnabled(configIndex, entryIndex, enabled)
             }

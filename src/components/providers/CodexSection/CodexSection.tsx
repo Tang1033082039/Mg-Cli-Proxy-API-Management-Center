@@ -32,6 +32,7 @@ interface CodexSectionProps {
   onAdd: () => void;
   onEdit: (index: number) => void;
   onDelete: (index: number) => void;
+  onToggle: (index: number, enabled: boolean) => void;
   onToggleEntry: (configIndex: number, entryIndex: number, enabled: boolean) => void;
 }
 
@@ -52,6 +53,7 @@ export function CodexSection({
   onAdd,
   onEdit,
   onDelete,
+  onToggle,
   onToggleEntry,
 }: CodexSectionProps) {
   const { t } = useTranslation();
@@ -106,6 +108,14 @@ export function CodexSection({
             hasDisableAllModelsRule(item.excludedModels) ||
             getCodexApiKeyEntries(item).every((entry) => entry.disabled === true)
           }
+          renderExtraActions={(item, index) => (
+            <ToggleSwitch
+              label={t('ai_providers.config_toggle_label')}
+              checked={!hasDisableAllModelsRule(item.excludedModels)}
+              disabled={toggleDisabled}
+              onChange={(value) => void onToggle(index, value)}
+            />
+          )}
           renderContent={(item, index) => {
             const stats = getCodexConfigStats(item, keyStats);
             const headerEntries = Object.entries(item.headers || {});
