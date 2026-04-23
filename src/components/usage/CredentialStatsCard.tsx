@@ -6,7 +6,14 @@ import type { GeminiKeyConfig, OpenAIProviderConfig, ProviderKeyConfig } from '@
 import type { AuthFileItem } from '@/types/authFile';
 import type { CredentialInfo } from '@/types/sourceInfo';
 import { buildSourceInfoMap, resolveSourceDisplay } from '@/utils/sourceResolver';
-import { collectUsageDetails, formatCompactNumber, normalizeAuthIndex } from '@/utils/usage';
+import {
+  calculateCacheRate,
+  collectUsageDetails,
+  extractTokenMetrics,
+  formatCompactNumber,
+  formatPercentage,
+  normalizeAuthIndex,
+} from '@/utils/usage';
 import type { UsagePayload } from './hooks/useUsageData';
 import styles from '@/pages/UsagePage.module.scss';
 
@@ -28,6 +35,11 @@ interface CredentialRow {
   failure: number;
   total: number;
   successRate: number;
+  totalTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  cacheRate: number;
 }
 
 export function CredentialStatsCard({
@@ -107,6 +119,11 @@ export function CredentialStatsCard({
           failure: 0,
           total: 0,
           successRate: 100,
+          totalTokens: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          cacheRate: 0,
         } satisfies CredentialRow);
 
       if (detail.failed === true) {
@@ -115,8 +132,14 @@ export function CredentialStatsCard({
         row.success += 1;
       }
 
+      const tokenMetrics = extractTokenMetrics(detail);
       row.total = row.success + row.failure;
       row.successRate = row.total > 0 ? (row.success / row.total) * 100 : 100;
+      row.totalTokens += tokenMetrics.totalTokens;
+      row.inputTokens += tokenMetrics.inputTokens;
+      row.outputTokens += tokenMetrics.outputTokens;
+      row.cachedTokens += tokenMetrics.cachedTokens;
+      row.cacheRate = calculateCacheRate(row.cachedTokens, row.totalTokens);
       rowMap.set(key, row);
     });
 
@@ -135,6 +158,11 @@ export function CredentialStatsCard({
                 <tr>
                   <th>{t('usage_stats.credential_name')}</th>
                   <th>{t('usage_stats.requests_count')}</th>
+                  <th>{t('usage_stats.total_tokens')}</th>
+                  <th>{t('usage_stats.input_tokens')}</th>
+                  <th>{t('usage_stats.output_tokens')}</th>
+                  <th>{t('usage_stats.cached_tokens')}</th>
+                  <th>{t('usage_stats.cache_rate')}</th>
                   <th>{t('usage_stats.success_rate')}</th>
                 </tr>
               </thead>
@@ -159,6 +187,21 @@ export function CredentialStatsCard({
                           )
                         </span>
                       </span>
+                    </td>
+                    <td>
+                      {formatCompactNumber(row.totalTokens)}
+                    </td>
+                    <td>
+                      {formatCompactNumber(row.inputTokens)}
+                    </td>
+                    <td>
+                      {formatCompactNumber(row.outputTokens)}
+                    </td>
+                    <td>
+                      {formatCompactNumber(row.cachedTokens)}
+                    </td>
+                    <td>
+                      {formatPercentage(row.cacheRate)}
                     </td>
                     <td>
                       <span

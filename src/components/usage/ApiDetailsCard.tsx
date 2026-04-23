@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
-import { formatCompactNumber, formatUsd, type ApiStats } from '@/utils/usage';
+import { formatCompactNumber, formatPercentage, formatUsd, type ApiStats } from '@/utils/usage';
 import styles from '@/pages/UsagePage.module.scss';
 
 export interface ApiDetailsCardProps {
@@ -10,7 +10,7 @@ export interface ApiDetailsCardProps {
   hasPrices: boolean;
 }
 
-type ApiSortKey = 'endpoint' | 'requests' | 'tokens' | 'cost';
+type ApiSortKey = 'endpoint' | 'requests' | 'tokens' | 'cost' | 'cacheRate';
 type SortDir = 'asc' | 'desc';
 
 export function ApiDetailsCard({ apiStats, loading, hasPrices }: ApiDetailsCardProps) {
@@ -49,6 +49,7 @@ export function ApiDetailsCard({ apiStats, loading, hasPrices }: ApiDetailsCardP
         case 'requests': return dir * (a.totalRequests - b.totalRequests);
         case 'tokens': return dir * (a.totalTokens - b.totalTokens);
         case 'cost': return dir * (a.totalCost - b.totalCost);
+        case 'cacheRate': return dir * (a.cacheRate - b.cacheRate);
         default: return 0;
       }
     });
@@ -69,6 +70,7 @@ export function ApiDetailsCard({ apiStats, loading, hasPrices }: ApiDetailsCardP
               ['endpoint', 'usage_stats.api_endpoint'],
               ['requests', 'usage_stats.requests_count'],
               ['tokens', 'usage_stats.tokens_count'],
+              ['cacheRate', 'usage_stats.cache_rate'],
               ...(hasPrices ? [['cost', 'usage_stats.total_cost']] : []),
             ] as [ApiSortKey, string][]).map(([key, labelKey]) => (
               <button
@@ -87,6 +89,9 @@ export function ApiDetailsCard({ apiStats, loading, hasPrices }: ApiDetailsCardP
               {sorted.map((api, index) => {
                 const isExpanded = expandedApis.has(api.endpoint);
                 const panelId = `api-models-${index}`;
+                const modelEntries = Object.entries(api.models).sort(
+                  (left, right) => right[1].requests - left[1].requests
+                );
 
                 return (
                   <div key={api.endpoint} className={styles.apiItem}>
@@ -114,9 +119,39 @@ export function ApiDetailsCard({ apiStats, loading, hasPrices }: ApiDetailsCardP
                           <span className={styles.apiBadge}>
                             {t('usage_stats.tokens_count')}: {formatCompactNumber(api.totalTokens)}
                           </span>
-                          {hasPrices && api.totalCost > 0 && (
+                          <span className={styles.apiBadge}>
+                            {t('usage_stats.input_tokens')}: {formatCompactNumber(api.inputTokens)}
+                          </span>
+                          <span className={styles.apiBadge}>
+                            {t('usage_stats.output_tokens')}: {formatCompactNumber(api.outputTokens)}
+                          </span>
+                          <span className={styles.apiBadge}>
+                            {t('usage_stats.cached_tokens')}: {formatCompactNumber(api.cachedTokens)}
+                          </span>
+                          <span className={styles.apiBadge}>
+                            {t('usage_stats.cache_rate')}: {formatPercentage(api.cacheRate)}
+                          </span>
+                          <span className={styles.apiBadge}>
+                            {t('usage_stats.reasoning_tokens')}: {formatCompactNumber(api.reasoningTokens)}
+                          </span>
+                          {hasPrices && (
                             <span className={styles.apiBadge}>
                               {t('usage_stats.total_cost')}: {formatUsd(api.totalCost)}
+                            </span>
+                          )}
+                          {hasPrices && (
+                            <span className={styles.apiBadge}>
+                              {t('usage_stats.input_cost')}: {formatUsd(api.inputCost)}
+                            </span>
+                          )}
+                          {hasPrices && (
+                            <span className={styles.apiBadge}>
+                              {t('usage_stats.output_cost')}: {formatUsd(api.outputCost)}
+                            </span>
+                          )}
+                          {hasPrices && (
+                            <span className={styles.apiBadge}>
+                              {t('usage_stats.cache_cost')}: {formatUsd(api.cacheCost)}
                             </span>
                           )}
                         </div>
@@ -127,19 +162,62 @@ export function ApiDetailsCard({ apiStats, loading, hasPrices }: ApiDetailsCardP
                     </button>
                     {isExpanded && (
                       <div id={panelId} className={styles.apiModels}>
-                        {Object.entries(api.models).map(([model, stats]) => (
+                        {modelEntries.map(([model, stats]) => (
                           <div key={model} className={styles.modelRow}>
-                            <span className={styles.modelName}>{model}</span>
-                            <span className={styles.modelStat}>
-                              <span className={styles.requestCountCell}>
-                                <span>{stats.requests.toLocaleString()}</span>
-                                <span className={styles.requestBreakdown}>
-                                  (<span className={styles.statSuccess}>{stats.successCount.toLocaleString()}</span>{' '}
-                                  <span className={styles.statFailure}>{stats.failureCount.toLocaleString()}</span>)
+                            <div className={styles.modelRowHeader}>
+                              <span className={styles.modelName}>{model}</span>
+                            </div>
+                            <div className={styles.modelRowStats}>
+                              <span className={styles.apiBadge}>
+                                <span className={styles.requestCountCell}>
+                                  <span>
+                                    {t('usage_stats.requests_count')}: {stats.requests.toLocaleString()}
+                                  </span>
+                                  <span className={styles.requestBreakdown}>
+                                    (<span className={styles.statSuccess}>{stats.successCount.toLocaleString()}</span>{' '}
+                                    <span className={styles.statFailure}>{stats.failureCount.toLocaleString()}</span>)
+                                  </span>
                                 </span>
                               </span>
-                            </span>
-                            <span className={styles.modelStat}>{formatCompactNumber(stats.tokens)}</span>
+                              <span className={styles.apiBadge}>
+                                {t('usage_stats.tokens_count')}: {formatCompactNumber(stats.tokens)}
+                              </span>
+                              <span className={styles.apiBadge}>
+                                {t('usage_stats.input_tokens')}: {formatCompactNumber(stats.inputTokens)}
+                              </span>
+                              <span className={styles.apiBadge}>
+                                {t('usage_stats.output_tokens')}: {formatCompactNumber(stats.outputTokens)}
+                              </span>
+                              <span className={styles.apiBadge}>
+                                {t('usage_stats.cached_tokens')}: {formatCompactNumber(stats.cachedTokens)}
+                              </span>
+                              <span className={styles.apiBadge}>
+                                {t('usage_stats.cache_rate')}: {formatPercentage(stats.cacheRate)}
+                              </span>
+                              <span className={styles.apiBadge}>
+                                {t('usage_stats.reasoning_tokens')}: {formatCompactNumber(stats.reasoningTokens)}
+                              </span>
+                              {hasPrices && (
+                                <span className={styles.apiBadge}>
+                                  {t('usage_stats.total_cost')}: {formatUsd(stats.cost)}
+                                </span>
+                              )}
+                              {hasPrices && (
+                                <span className={styles.apiBadge}>
+                                  {t('usage_stats.input_cost')}: {formatUsd(stats.inputCost)}
+                                </span>
+                              )}
+                              {hasPrices && (
+                                <span className={styles.apiBadge}>
+                                  {t('usage_stats.output_cost')}: {formatUsd(stats.outputCost)}
+                                </span>
+                              )}
+                              {hasPrices && (
+                                <span className={styles.apiBadge}>
+                                  {t('usage_stats.cache_cost')}: {formatUsd(stats.cacheCost)}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>

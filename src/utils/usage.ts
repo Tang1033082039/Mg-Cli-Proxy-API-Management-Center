@@ -47,6 +47,22 @@ export interface RateStats {
   tokenCount: number;
 }
 
+export interface TokenMetrics {
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  reasoningTokens: number;
+  totalTokens: number;
+  cacheRate: number;
+}
+
+export interface CostMetrics {
+  inputCost: number;
+  outputCost: number;
+  cacheCost: number;
+  totalCost: number;
+}
+
 export interface ModelPrice {
   prompt: number;
   completion: number;
@@ -85,10 +101,31 @@ export interface ApiStats {
   failureCount: number;
   totalTokens: number;
   totalCost: number;
-  models: Record<
-    string,
-    { requests: number; successCount: number; failureCount: number; tokens: number }
-  >;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  reasoningTokens: number;
+  cacheRate: number;
+  inputCost: number;
+  outputCost: number;
+  cacheCost: number;
+  models: Record<string, ApiModelStats>;
+}
+
+export interface ApiModelStats {
+  requests: number;
+  successCount: number;
+  failureCount: number;
+  tokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  reasoningTokens: number;
+  cacheRate: number;
+  cost: number;
+  inputCost: number;
+  outputCost: number;
+  cacheCost: number;
 }
 
 export interface ModelStatsSummary {
@@ -97,7 +134,15 @@ export interface ModelStatsSummary {
   successCount: number;
   failureCount: number;
   tokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  reasoningTokens: number;
+  cacheRate: number;
   cost: number;
+  inputCost: number;
+  outputCost: number;
+  cacheCost: number;
   averageLatencyMs: number | null;
   totalLatencyMs: number | null;
   latencySampleCount: number;
@@ -143,6 +188,51 @@ const toUsageSummaryFields = (summary: UsageSummary) => ({
   failure_count: summary.failureCount,
   total_tokens: summary.totalTokens,
 });
+
+const toNonNegativeNumber = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0;
+  }
+  return parsed;
+};
+
+const createEmptyTokenMetrics = (): TokenMetrics => ({
+  inputTokens: 0,
+  outputTokens: 0,
+  cachedTokens: 0,
+  reasoningTokens: 0,
+  totalTokens: 0,
+  cacheRate: 0,
+});
+
+const createEmptyCostMetrics = (): CostMetrics => ({
+  inputCost: 0,
+  outputCost: 0,
+  cacheCost: 0,
+  totalCost: 0,
+});
+
+const accumulateTokenMetrics = (
+  target: TokenMetrics,
+  value: Pick<TokenMetrics, 'inputTokens' | 'outputTokens' | 'cachedTokens' | 'reasoningTokens' | 'totalTokens'>
+): TokenMetrics => {
+  target.inputTokens += value.inputTokens;
+  target.outputTokens += value.outputTokens;
+  target.cachedTokens += value.cachedTokens;
+  target.reasoningTokens += value.reasoningTokens;
+  target.totalTokens += value.totalTokens;
+  target.cacheRate = calculateCacheRate(target.cachedTokens, target.totalTokens);
+  return target;
+};
+
+const accumulateCostMetrics = (target: CostMetrics, value: CostMetrics): CostMetrics => {
+  target.inputCost += value.inputCost;
+  target.outputCost += value.outputCost;
+  target.cacheCost += value.cacheCost;
+  target.totalCost += value.totalCost;
+  return target;
+};
 
 export function filterUsageByTimeRange<T>(
   usageData: T,
@@ -498,6 +588,16 @@ export function formatUsd(value: number): string {
   return `$${parts}`;
 }
 
+export function formatPercentage(value: number, fractionDigits = 1): string {
+  const digits =
+    Number.isFinite(fractionDigits) && fractionDigits >= 0 ? Math.floor(fractionDigits) : 1;
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return `0.${'0'.repeat(digits)}%`;
+  }
+  return `${num.toFixed(digits)}%`;
+}
+
 const usageDetailsCache = new WeakMap<object, UsageDetail[]>();
 const usageDetailsWithEndpointCache = new WeakMap<object, UsageDetailWithEndpoint[]>();
 
@@ -653,25 +753,96 @@ export function collectUsageDetailsWithEndpoint(usageData: unknown): UsageDetail
   return details;
 }
 
+export function calculateCacheRate(cachedTokens: number, totalTokens: number): number {
+  if (!Number.isFinite(totalTokens) || totalTokens <= 0) {
+    return 0;
+  }
+  return (Math.max(cachedTokens, 0) / totalTokens) * 100;
+}
+
+export function extractTokenMetrics(detail: unknown): TokenMetrics {
+  const record = isRecord(detail) ? detail : null;
+  const tokensRaw = record?.tokens;
+  const tokens = isRecord(tokensRaw) ? tokensRaw : {};
+  const inputTokens = toNonNegativeNumber(tokens.input_tokens);
+  const outputTokens = toNonNegativeNumber(tokens.output_tokens);
+  const cachedTokens = Math.max(
+    toNonNegativeNumber(tokens.cached_tokens),
+    toNonNegativeNumber(tokens.cache_tokens)
+  );
+  const reasoningTokens = toNonNegativeNumber(tokens.reasoning_tokens);
+  const totalTokensRaw = Number(tokens.total_tokens);
+  const totalTokens = Number.isFinite(totalTokensRaw) && totalTokensRaw > 0
+    ? totalTokensRaw
+    : inputTokens + outputTokens + reasoningTokens + cachedTokens;
+
+  return {
+    inputTokens,
+    outputTokens,
+    cachedTokens,
+    reasoningTokens,
+    totalTokens,
+    cacheRate: calculateCacheRate(cachedTokens, totalTokens),
+  };
+}
+
+export function calculateCostBreakdown(
+  detail: UsageDetail,
+  modelPrices: Record<string, ModelPrice>
+): CostMetrics {
+  const modelName = detail.__modelName || '';
+  const price = modelPrices[modelName];
+  if (!price) {
+    return createEmptyCostMetrics();
+  }
+
+  const tokenMetrics = extractTokenMetrics(detail);
+  const promptTokens = Math.max(tokenMetrics.inputTokens - tokenMetrics.cachedTokens, 0);
+  const inputCost = (promptTokens / TOKENS_PER_PRICE_UNIT) * (Number(price.prompt) || 0);
+  const cacheCost = (tokenMetrics.cachedTokens / TOKENS_PER_PRICE_UNIT) * (Number(price.cache) || 0);
+  const outputCost =
+    (tokenMetrics.outputTokens / TOKENS_PER_PRICE_UNIT) * (Number(price.completion) || 0);
+  const totalCost = inputCost + cacheCost + outputCost;
+
+  return {
+    inputCost,
+    outputCost,
+    cacheCost,
+    totalCost: Number.isFinite(totalCost) && totalCost > 0 ? totalCost : 0,
+  };
+}
+
+export function calculateUsageMetrics(
+  usageData: unknown,
+  modelPrices: Record<string, ModelPrice> = {}
+): { tokens: TokenMetrics; costs: CostMetrics } {
+  const details = collectUsageDetails(usageData);
+  if (!details.length) {
+    return {
+      tokens: createEmptyTokenMetrics(),
+      costs: createEmptyCostMetrics(),
+    };
+  }
+
+  const tokens = createEmptyTokenMetrics();
+  const costs = createEmptyCostMetrics();
+  const hasModelPrices = Object.keys(modelPrices).length > 0;
+
+  details.forEach((detail) => {
+    accumulateTokenMetrics(tokens, extractTokenMetrics(detail));
+    if (hasModelPrices) {
+      accumulateCostMetrics(costs, calculateCostBreakdown(detail, modelPrices));
+    }
+  });
+
+  return { tokens, costs };
+}
+
 /**
  * 从单条明细提取总 tokens
  */
 export function extractTotalTokens(detail: unknown): number {
-  const record = isRecord(detail) ? detail : null;
-  const tokensRaw = record?.tokens;
-  const tokens = isRecord(tokensRaw) ? tokensRaw : {};
-  if (typeof tokens.total_tokens === 'number') {
-    return tokens.total_tokens;
-  }
-  const inputTokens = typeof tokens.input_tokens === 'number' ? tokens.input_tokens : 0;
-  const outputTokens = typeof tokens.output_tokens === 'number' ? tokens.output_tokens : 0;
-  const reasoningTokens = typeof tokens.reasoning_tokens === 'number' ? tokens.reasoning_tokens : 0;
-  const cachedTokens = Math.max(
-    typeof tokens.cached_tokens === 'number' ? Math.max(tokens.cached_tokens, 0) : 0,
-    typeof tokens.cache_tokens === 'number' ? Math.max(tokens.cache_tokens, 0) : 0
-  );
-
-  return inputTokens + outputTokens + reasoningTokens + cachedTokens;
+  return extractTokenMetrics(detail).totalTokens;
 }
 
 /**
@@ -776,33 +947,7 @@ export function calculateCost(
   detail: UsageDetail,
   modelPrices: Record<string, ModelPrice>
 ): number {
-  const modelName = detail.__modelName || '';
-  const price = modelPrices[modelName];
-  if (!price) {
-    return 0;
-  }
-  const tokens = detail.tokens;
-  const rawInputTokens = Number(tokens.input_tokens);
-  const rawCompletionTokens = Number(tokens.output_tokens);
-  const rawCachedTokensPrimary = Number(tokens.cached_tokens);
-  const rawCachedTokensAlternate = Number(tokens.cache_tokens);
-
-  const inputTokens = Number.isFinite(rawInputTokens) ? Math.max(rawInputTokens, 0) : 0;
-  const completionTokens = Number.isFinite(rawCompletionTokens)
-    ? Math.max(rawCompletionTokens, 0)
-    : 0;
-  const cachedTokens = Math.max(
-    Number.isFinite(rawCachedTokensPrimary) ? Math.max(rawCachedTokensPrimary, 0) : 0,
-    Number.isFinite(rawCachedTokensAlternate) ? Math.max(rawCachedTokensAlternate, 0) : 0
-  );
-  const promptTokens = Math.max(inputTokens - cachedTokens, 0);
-
-  const promptCost = (promptTokens / TOKENS_PER_PRICE_UNIT) * (Number(price.prompt) || 0);
-  const cachedCost = (cachedTokens / TOKENS_PER_PRICE_UNIT) * (Number(price.cache) || 0);
-  const completionCost =
-    (completionTokens / TOKENS_PER_PRICE_UNIT) * (Number(price.completion) || 0);
-  const total = promptCost + cachedCost + completionCost;
-  return Number.isFinite(total) && total > 0 ? total : 0;
+  return calculateCostBreakdown(detail, modelPrices).totalCost;
 }
 
 /**
@@ -812,11 +957,7 @@ export function calculateTotalCost(
   usageData: unknown,
   modelPrices: Record<string, ModelPrice>
 ): number {
-  const details = collectUsageDetails(usageData);
-  if (!details.length || !Object.keys(modelPrices).length) {
-    return 0;
-  }
-  return details.reduce((sum, detail) => sum + calculateCost(detail, modelPrices), 0);
+  return calculateUsageMetrics(usageData, modelPrices).costs.totalCost;
 }
 
 /**
@@ -899,13 +1040,11 @@ export function getApiStats(
 
   Object.entries(apis).forEach(([endpoint, apiData]) => {
     if (!isRecord(apiData)) return;
-    const models: Record<
-      string,
-      { requests: number; successCount: number; failureCount: number; tokens: number }
-    > = {};
+    const models: Record<string, ApiModelStats> = {};
     let derivedSuccessCount = 0;
     let derivedFailureCount = 0;
-    let totalCost = 0;
+    const apiTokens = createEmptyTokenMetrics();
+    const apiCosts = createEmptyCostMetrics();
 
     const modelsData = isRecord(apiData.models) ? apiData.models : {};
     Object.entries(modelsData).forEach(([modelName, modelData]) => {
@@ -921,8 +1060,10 @@ export function getApiStats(
         failureCount += Number(modelData.failure_count) || 0;
       }
 
-      const price = modelPrices[modelName];
-      if (details.length > 0 && (!hasExplicitCounts || price)) {
+      const modelTokens = createEmptyTokenMetrics();
+      const modelCosts = createEmptyCostMetrics();
+
+      if (details.length > 0) {
         details.forEach((detail) => {
           const detailRecord = isRecord(detail) ? detail : null;
           if (!hasExplicitCounts) {
@@ -933,23 +1074,48 @@ export function getApiStats(
             }
           }
 
-          if (price && detailRecord) {
-            totalCost += calculateCost(
-              { ...(detailRecord as unknown as UsageDetail), __modelName: modelName },
-              modelPrices
-            );
+          if (detailRecord) {
+            const usageDetail = {
+              ...(detailRecord as unknown as UsageDetail),
+              __modelName: modelName,
+            };
+            accumulateTokenMetrics(modelTokens, extractTokenMetrics(usageDetail));
+            accumulateCostMetrics(modelCosts, calculateCostBreakdown(usageDetail, modelPrices));
           }
         });
       }
 
+      const totalTokens = Number(modelData.total_tokens) || modelTokens.totalTokens;
+      if (!modelTokens.totalTokens && totalTokens > 0) {
+        modelTokens.totalTokens = totalTokens;
+        modelTokens.cacheRate = calculateCacheRate(modelTokens.cachedTokens, totalTokens);
+      }
+
       models[modelName] = {
-        requests: Number(modelData.total_requests) || 0,
+        requests: Number(modelData.total_requests) || details.length,
         successCount,
         failureCount,
-        tokens: Number(modelData.total_tokens) || 0,
+        tokens: totalTokens,
+        inputTokens: modelTokens.inputTokens,
+        outputTokens: modelTokens.outputTokens,
+        cachedTokens: modelTokens.cachedTokens,
+        reasoningTokens: modelTokens.reasoningTokens,
+        cacheRate: modelTokens.cacheRate,
+        cost: modelCosts.totalCost,
+        inputCost: modelCosts.inputCost,
+        outputCost: modelCosts.outputCost,
+        cacheCost: modelCosts.cacheCost,
       };
       derivedSuccessCount += successCount;
       derivedFailureCount += failureCount;
+      accumulateTokenMetrics(apiTokens, {
+        inputTokens: modelTokens.inputTokens,
+        outputTokens: modelTokens.outputTokens,
+        cachedTokens: modelTokens.cachedTokens,
+        reasoningTokens: modelTokens.reasoningTokens,
+        totalTokens,
+      });
+      accumulateCostMetrics(apiCosts, modelCosts);
     });
 
     const hasApiExplicitCounts =
@@ -960,14 +1126,27 @@ export function getApiStats(
     const failureCount = hasApiExplicitCounts
       ? Number(apiData.failure_count) || 0
       : derivedFailureCount;
+    const totalTokens = Number(apiData.total_tokens) || apiTokens.totalTokens;
+    if (!apiTokens.totalTokens && totalTokens > 0) {
+      apiTokens.totalTokens = totalTokens;
+      apiTokens.cacheRate = calculateCacheRate(apiTokens.cachedTokens, totalTokens);
+    }
 
     result.push({
       endpoint: maskUsageSensitiveValue(endpoint) || endpoint,
-      totalRequests: Number(apiData.total_requests) || 0,
+      totalRequests: Number(apiData.total_requests) || Object.values(models).reduce((sum, model) => sum + model.requests, 0),
       successCount,
       failureCount,
-      totalTokens: Number(apiData.total_tokens) || 0,
-      totalCost,
+      totalTokens,
+      totalCost: apiCosts.totalCost,
+      inputTokens: apiTokens.inputTokens,
+      outputTokens: apiTokens.outputTokens,
+      cachedTokens: apiTokens.cachedTokens,
+      reasoningTokens: apiTokens.reasoningTokens,
+      cacheRate: apiTokens.cacheRate,
+      inputCost: apiCosts.inputCost,
+      outputCost: apiCosts.outputCost,
+      cacheCost: apiCosts.cacheCost,
       models,
     });
   });
@@ -992,7 +1171,9 @@ export function getModelStats(
       successCount: number;
       failureCount: number;
       tokens: number;
+      tokenMetrics: TokenMetrics;
       cost: number;
+      costMetrics: CostMetrics;
       latency: LatencyAccumulator;
     }
   >();
@@ -1005,20 +1186,20 @@ export function getModelStats(
 
     Object.entries(models).forEach(([modelName, modelData]) => {
       if (!isRecord(modelData)) return;
+      const details = Array.isArray(modelData.details) ? modelData.details : [];
       const existing = modelMap.get(modelName) || {
         requests: 0,
         successCount: 0,
         failureCount: 0,
         tokens: 0,
+        tokenMetrics: createEmptyTokenMetrics(),
         cost: 0,
+        costMetrics: createEmptyCostMetrics(),
         latency: createLatencyAccumulator(),
       };
-      existing.requests += Number(modelData.total_requests) || 0;
-      existing.tokens += Number(modelData.total_tokens) || 0;
-
-      const details = Array.isArray(modelData.details) ? modelData.details : [];
-
-      const price = modelPrices[modelName];
+      existing.requests += Number(modelData.total_requests) || details.length;
+      const entryTokenMetrics = createEmptyTokenMetrics();
+      const entryCostMetrics = createEmptyCostMetrics();
 
       const hasExplicitCounts =
         typeof modelData.success_count === 'number' || typeof modelData.failure_count === 'number';
@@ -1041,14 +1222,20 @@ export function getModelStats(
 
           addLatencySample(existing.latency, latencyMs);
 
-          if (price && detailRecord) {
-            existing.cost += calculateCost(
-              { ...(detailRecord as unknown as UsageDetail), __modelName: modelName },
-              modelPrices
-            );
+          if (detailRecord) {
+            const usageDetail = {
+              ...(detailRecord as unknown as UsageDetail),
+              __modelName: modelName,
+            };
+            accumulateTokenMetrics(entryTokenMetrics, extractTokenMetrics(usageDetail));
+            accumulateCostMetrics(entryCostMetrics, calculateCostBreakdown(usageDetail, modelPrices));
           }
         });
       }
+      accumulateTokenMetrics(existing.tokenMetrics, entryTokenMetrics);
+      accumulateCostMetrics(existing.costMetrics, entryCostMetrics);
+      existing.tokens += Number(modelData.total_tokens) || entryTokenMetrics.totalTokens;
+      existing.cost = existing.costMetrics.totalCost;
       modelMap.set(modelName, existing);
     });
   });
@@ -1062,7 +1249,15 @@ export function getModelStats(
         successCount: stats.successCount,
         failureCount: stats.failureCount,
         tokens: stats.tokens,
+        inputTokens: stats.tokenMetrics.inputTokens,
+        outputTokens: stats.tokenMetrics.outputTokens,
+        cachedTokens: stats.tokenMetrics.cachedTokens,
+        reasoningTokens: stats.tokenMetrics.reasoningTokens,
+        cacheRate: stats.tokenMetrics.cacheRate,
         cost: stats.cost,
+        inputCost: stats.costMetrics.inputCost,
+        outputCost: stats.costMetrics.outputCost,
+        cacheCost: stats.costMetrics.cacheCost,
         averageLatencyMs: latencyStats.averageMs,
         totalLatencyMs: latencyStats.totalMs,
         latencySampleCount: latencyStats.sampleCount,

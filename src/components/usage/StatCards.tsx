@@ -11,10 +11,12 @@ import {
 import {
   LATENCY_SOURCE_FIELD,
   calculateLatencyStatsFromDetails,
-  calculateCost,
+  calculateCacheRate,
+  calculateUsageMetrics,
   formatCompactNumber,
   formatDurationMs,
   formatPerMinuteValue,
+  formatPercentage,
   formatUsd,
   collectUsageDetails,
   extractTotalTokens,
@@ -60,11 +62,25 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
 
   const hasPrices = Object.keys(modelPrices).length > 0;
 
-  const { tokenBreakdown, rateStats, totalCost, latencyStats } = useMemo(() => {
+  const { usageMetrics, rateStats, latencyStats } = useMemo(() => {
     const empty = {
-      tokenBreakdown: { cachedTokens: 0, reasoningTokens: 0 },
+      usageMetrics: {
+        tokens: {
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+          reasoningTokens: 0,
+          totalTokens: 0,
+          cacheRate: 0,
+        },
+        costs: {
+          inputCost: 0,
+          outputCost: 0,
+          cacheCost: 0,
+          totalCost: 0,
+        },
+      },
       rateStats: { rpm: 0, tpm: 0, windowMinutes: 30, requestCount: 0, tokenCount: 0 },
-      totalCost: 0,
       latencyStats: {
         averageMs: null as number | null,
         totalMs: null as number | null,
@@ -76,11 +92,8 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
     const details = collectUsageDetails(usage);
     if (!details.length) return empty;
 
+    const usageMetrics = calculateUsageMetrics(usage, modelPrices);
     const latencyStats = calculateLatencyStatsFromDetails(details);
-
-    let cachedTokens = 0;
-    let reasoningTokens = 0;
-    let totalCost = 0;
 
     const now = nowMs;
     const windowMinutes = 30;
@@ -90,15 +103,6 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
     const hasValidNow = Number.isFinite(now) && now > 0;
 
     details.forEach((detail) => {
-      const tokens = detail.tokens;
-      cachedTokens += Math.max(
-        typeof tokens.cached_tokens === 'number' ? Math.max(tokens.cached_tokens, 0) : 0,
-        typeof tokens.cache_tokens === 'number' ? Math.max(tokens.cache_tokens, 0) : 0
-      );
-      if (typeof tokens.reasoning_tokens === 'number') {
-        reasoningTokens += tokens.reasoning_tokens;
-      }
-
       const timestamp = detail.__timestampMs ?? 0;
       if (
         hasValidNow &&
@@ -109,15 +113,11 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
         requestCount += 1;
         tokenCount += extractTotalTokens(detail);
       }
-
-      if (hasPrices) {
-        totalCost += calculateCost(detail, modelPrices);
-      }
     });
 
     const denominator = windowMinutes > 0 ? windowMinutes : 1;
     return {
-      tokenBreakdown: { cachedTokens, reasoningTokens },
+      usageMetrics,
       rateStats: {
         rpm: requestCount / denominator,
         tpm: tokenCount / denominator,
@@ -125,10 +125,15 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
         requestCount,
         tokenCount,
       },
-      totalCost,
       latencyStats,
     };
   }, [hasPrices, modelPrices, nowMs, usage]);
+
+  const displayTotalTokens = usage?.total_tokens ?? usageMetrics.tokens.totalTokens;
+  const displayCacheRate = calculateCacheRate(
+    usageMetrics.tokens.cachedTokens,
+    displayTotalTokens
+  );
 
   const statsCards: StatCardData[] = [
     {
@@ -166,16 +171,28 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
       accent: '#8b5cf6',
       accentSoft: 'rgba(139, 92, 246, 0.18)',
       accentBorder: 'rgba(139, 92, 246, 0.35)',
-      value: loading ? '-' : formatCompactNumber(usage?.total_tokens ?? 0),
+      value: loading ? '-' : formatCompactNumber(displayTotalTokens),
       meta: (
         <>
           <span className={styles.statMetaItem}>
+            {t('usage_stats.input_tokens')}:{' '}
+            {loading ? '-' : formatCompactNumber(usageMetrics.tokens.inputTokens)}
+          </span>
+          <span className={styles.statMetaItem}>
+            {t('usage_stats.output_tokens')}:{' '}
+            {loading ? '-' : formatCompactNumber(usageMetrics.tokens.outputTokens)}
+          </span>
+          <span className={styles.statMetaItem}>
             {t('usage_stats.cached_tokens')}:{' '}
-            {loading ? '-' : formatCompactNumber(tokenBreakdown.cachedTokens)}
+            {loading ? '-' : formatCompactNumber(usageMetrics.tokens.cachedTokens)}
           </span>
           <span className={styles.statMetaItem}>
             {t('usage_stats.reasoning_tokens')}:{' '}
-            {loading ? '-' : formatCompactNumber(tokenBreakdown.reasoningTokens)}
+            {loading ? '-' : formatCompactNumber(usageMetrics.tokens.reasoningTokens)}
+          </span>
+          <span className={styles.statMetaItem}>
+            {t('usage_stats.cache_rate')}:{' '}
+            {loading ? '-' : formatPercentage(displayCacheRate)}
           </span>
         </>
       ),
@@ -220,12 +237,20 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
       accent: '#f59e0b',
       accentSoft: 'rgba(245, 158, 11, 0.18)',
       accentBorder: 'rgba(245, 158, 11, 0.32)',
-      value: loading ? '-' : hasPrices ? formatUsd(totalCost) : '--',
+      value: loading ? '-' : hasPrices ? formatUsd(usageMetrics.costs.totalCost) : '--',
       meta: (
         <>
           <span className={styles.statMetaItem}>
-            {t('usage_stats.total_tokens')}:{' '}
-            {loading ? '-' : formatCompactNumber(usage?.total_tokens ?? 0)}
+            {t('usage_stats.input_cost')}:{' '}
+            {loading ? '-' : hasPrices ? formatUsd(usageMetrics.costs.inputCost) : '--'}
+          </span>
+          <span className={styles.statMetaItem}>
+            {t('usage_stats.output_cost')}:{' '}
+            {loading ? '-' : hasPrices ? formatUsd(usageMetrics.costs.outputCost) : '--'}
+          </span>
+          <span className={styles.statMetaItem}>
+            {t('usage_stats.cache_cost')}:{' '}
+            {loading ? '-' : hasPrices ? formatUsd(usageMetrics.costs.cacheCost) : '--'}
           </span>
           {!hasPrices && (
             <span className={`${styles.statMetaItem} ${styles.statSubtle}`}>

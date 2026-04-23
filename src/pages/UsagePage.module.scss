@@ -434,7 +434,12 @@
 }
 
 .apiBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
   font-size: 11px;
+  line-height: 1.4;
   color: var(--text-secondary);
   background-color: var(--bg-primary);
   border: 1px solid var(--border-color);
@@ -460,19 +465,27 @@
 }
 
 .modelRow {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding: 8px 10px;
   background-color: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: $radius-md;
   font-size: 12px;
+}
 
-  @include mobile {
-    grid-template-columns: 1fr;
-    gap: 3px;
-  }
+.modelRowHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.modelRowStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .modelName {

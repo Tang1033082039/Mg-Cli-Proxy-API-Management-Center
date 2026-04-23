@@ -11,10 +11,12 @@ import type { CredentialInfo } from '@/types/sourceInfo';
 import { buildSourceInfoMap, resolveSourceDisplay } from '@/utils/sourceResolver';
 import { parseTimestampMs } from '@/utils/timestamp';
 import {
+  calculateCacheRate,
   collectUsageDetails,
   extractLatencyMs,
   extractTotalTokens,
   formatDurationMs,
+  formatPercentage,
   LATENCY_SOURCE_FIELD,
   normalizeAuthIndex,
 } from '@/utils/usage';
@@ -42,6 +44,7 @@ type RequestEventRow = {
   reasoningTokens: number;
   cachedTokens: number;
   totalTokens: number;
+  cacheRate: number;
 };
 
 export interface RequestEventsDetailsCardProps {
@@ -162,6 +165,7 @@ export function RequestEventsDetailsCard({
           toNumber(detail.tokens?.total_tokens),
           extractTotalTokens(detail)
         );
+        const cacheRate = calculateCacheRate(cachedTokens, totalTokens);
         const latencyMs = extractLatencyMs(detail);
 
         return {
@@ -182,6 +186,7 @@ export function RequestEventsDetailsCard({
           reasoningTokens,
           cachedTokens,
           totalTokens,
+          cacheRate,
         };
       });
 
@@ -324,6 +329,7 @@ export function RequestEventsDetailsCard({
       'reasoning_tokens',
       'cached_tokens',
       'total_tokens',
+      'cache_rate',
     ];
 
     const csvRows = filteredRows.map((row) =>
@@ -340,6 +346,7 @@ export function RequestEventsDetailsCard({
         row.reasoningTokens,
         row.cachedTokens,
         row.totalTokens,
+        row.cacheRate.toFixed(1),
       ]
         .map((value) => encodeCsv(value))
         .join(',')
@@ -370,6 +377,7 @@ export function RequestEventsDetailsCard({
         reasoning_tokens: row.reasoningTokens,
         cached_tokens: row.cachedTokens,
         total_tokens: row.totalTokens,
+        cache_rate: row.cacheRate,
       },
     }));
 
@@ -497,6 +505,7 @@ export function RequestEventsDetailsCard({
                   <th>{t('usage_stats.reasoning_tokens')}</th>
                   <th>{t('usage_stats.cached_tokens')}</th>
                   <th>{t('usage_stats.total_tokens')}</th>
+                  <th>{t('usage_stats.cache_rate')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -534,6 +543,7 @@ export function RequestEventsDetailsCard({
                     <td>{row.reasoningTokens.toLocaleString()}</td>
                     <td>{row.cachedTokens.toLocaleString()}</td>
                     <td>{row.totalTokens.toLocaleString()}</td>
+                    <td>{formatPercentage(row.cacheRate)}</td>
                   </tr>
                 ))}
               </tbody>
