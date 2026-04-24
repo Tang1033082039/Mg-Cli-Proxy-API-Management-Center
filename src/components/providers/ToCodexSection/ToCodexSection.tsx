@@ -152,52 +152,10 @@ export function ToCodexSection({
                   <span className={styles.fieldValue}>{item.baseUrl}</span>
                 </div>
               )}
-              {item.requestMode && (
-                <div className={styles.fieldRow}>
-                  <span className={styles.fieldLabel}>
-                    {t('ai_providers.tocodex_request_mode_label')}:
-                  </span>
-                  <span className={styles.fieldValue}>{item.requestMode}</span>
-                </div>
-              )}
               {item.proxyUrl && (
                 <div className={styles.fieldRow}>
                   <span className={styles.fieldLabel}>{t('common.proxy_url')}:</span>
                   <span className={styles.fieldValue}>{item.proxyUrl}</span>
-                </div>
-              )}
-              {item.chatPath && (
-                <div className={styles.fieldRow}>
-                  <span className={styles.fieldLabel}>{t('ai_providers.tocodex_chat_path_label')}:</span>
-                  <span className={styles.fieldValue}>{item.chatPath}</span>
-                </div>
-              )}
-              {item.responsesPath && (
-                <div className={styles.fieldRow}>
-                  <span className={styles.fieldLabel}>
-                    {t('ai_providers.tocodex_responses_path_label')}:
-                  </span>
-                  <span className={styles.fieldValue}>{item.responsesPath}</span>
-                </div>
-              )}
-              {item.responsesCompactPath && (
-                <div className={styles.fieldRow}>
-                  <span className={styles.fieldLabel}>
-                    {t('ai_providers.tocodex_responses_compact_path_label')}:
-                  </span>
-                  <span className={styles.fieldValue}>{item.responsesCompactPath}</span>
-                </div>
-              )}
-              {item.modelsPath && (
-                <div className={styles.fieldRow}>
-                  <span className={styles.fieldLabel}>{t('ai_providers.tocodex_models_path_label')}:</span>
-                  <span className={styles.fieldValue}>{item.modelsPath}</span>
-                </div>
-              )}
-              {item.testPath && (
-                <div className={styles.fieldRow}>
-                  <span className={styles.fieldLabel}>{t('ai_providers.tocodex_test_path_label')}:</span>
-                  <span className={styles.fieldValue}>{item.testPath}</span>
                 </div>
               )}
               {headerEntries.length > 0 && (

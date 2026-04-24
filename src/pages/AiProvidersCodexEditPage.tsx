@@ -32,12 +32,9 @@ import {
   buildToCodexSignedHeaders,
   TOCODEX_DEFAULT_CHAT_PATH,
   TOCODEX_DEFAULT_MODELS_PATH,
-  TOCODEX_DEFAULT_RESPONSES_COMPACT_PATH,
   TOCODEX_DEFAULT_RESPONSES_PATH,
   TOCODEX_DEFAULT_TEST_PATH,
-  TOCODEX_TEST_PATH_OPTIONS,
   normalizeToCodexRequestMode,
-  normalizeToCodexTestPath,
 } from '@/utils/tocodex';
 import layoutStyles from './AiProvidersEditLayout.module.scss';
 import styles from './AiProvidersPage.module.scss';
@@ -59,21 +56,23 @@ const CODEX_TEST_TIMEOUT_MS = 30_000;
 const CODEX_TEST_USER_AGENT =
   'codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)';
 
-const TOCODEX_REQUEST_MODE_OPTIONS = [
-  {
-    value: 'responses',
-    labelKey: 'ai_providers.tocodex_request_mode_option_responses',
-  },
-  {
-    value: 'chat',
-    labelKey: 'ai_providers.tocodex_request_mode_option_chat',
-  },
-] as const;
-
-const TOCODEX_TEST_PATH_SELECT_OPTIONS = TOCODEX_TEST_PATH_OPTIONS.map((value) => ({
-  value,
-  label: value,
-}));
+const inferToCodexTestPathFromBaseUrl = (
+  baseUrl: string
+): typeof TOCODEX_DEFAULT_CHAT_PATH | typeof TOCODEX_DEFAULT_RESPONSES_PATH => {
+  const normalizedBaseUrl = baseUrl.trim().toLowerCase();
+  if (!normalizedBaseUrl) return TOCODEX_DEFAULT_RESPONSES_PATH;
+  try {
+    const parsed = new URL(normalizedBaseUrl);
+    if (parsed.pathname.replace(/\/+$/g, '').endsWith(TOCODEX_DEFAULT_CHAT_PATH)) {
+      return TOCODEX_DEFAULT_CHAT_PATH;
+    }
+  } catch {
+    if (normalizedBaseUrl.replace(/\/+$/g, '').endsWith(TOCODEX_DEFAULT_CHAT_PATH)) {
+      return TOCODEX_DEFAULT_CHAT_PATH;
+    }
+  }
+  return TOCODEX_DEFAULT_RESPONSES_PATH;
+};
 
 const buildKeyTestStatuses = (count: number): CodexKeyTestStatus[] =>
   Array.from({ length: Math.max(count, 1) }, () => ({ status: 'idle', message: '' }));
@@ -86,12 +85,12 @@ const buildEmptyForm = (provider: ProviderKind = 'codex'): CodexFormState => ({
   baseUrl: '',
   websockets: provider === 'codex' ? false : undefined,
   proxyUrl: '',
-  requestMode: provider === 'tocodex' ? 'responses' : '',
-  chatPath: provider === 'tocodex' ? TOCODEX_DEFAULT_CHAT_PATH : '',
-  responsesPath: provider === 'tocodex' ? TOCODEX_DEFAULT_RESPONSES_PATH : '',
-  responsesCompactPath: provider === 'tocodex' ? TOCODEX_DEFAULT_RESPONSES_COMPACT_PATH : '',
-  modelsPath: provider === 'tocodex' ? TOCODEX_DEFAULT_MODELS_PATH : '',
-  testPath: provider === 'tocodex' ? TOCODEX_DEFAULT_TEST_PATH : '',
+  requestMode: '',
+  chatPath: '',
+  responsesPath: '',
+  responsesCompactPath: '',
+  modelsPath: '',
+  testPath: '',
   headers: [],
   models: [],
   excludedModels: [],
@@ -407,9 +406,11 @@ export function AiProvidersCodexEditPage({
         ...buildEmptyForm(provider),
         ...initialData,
         requestMode: nextRequestMode,
-        testPath: isToCodex
-          ? normalizeToCodexTestPath(initialData.testPath, nextRequestMode)
-          : String(initialData.testPath ?? ''),
+        chatPath: isToCodex ? '' : String(initialData.chatPath ?? ''),
+        responsesPath: isToCodex ? '' : String(initialData.responsesPath ?? ''),
+        responsesCompactPath: isToCodex ? '' : String(initialData.responsesCompactPath ?? ''),
+        modelsPath: isToCodex ? '' : String(initialData.modelsPath ?? ''),
+        testPath: isToCodex ? '' : String(initialData.testPath ?? ''),
         apiKeyEntries: codexConfigToApiKeyEntries(initialData),
         websockets: Boolean(initialData.websockets),
         headers: headersToEntries(initialData.headers),
@@ -540,15 +541,9 @@ export function AiProvidersCodexEditPage({
     () => modelDiscoveryEntry?.proxyUrl?.trim() || form.proxyUrl?.trim() || '',
     [form.proxyUrl, modelDiscoveryEntry]
   );
-  const toCodexRequestMode = useMemo(
-    () => normalizeToCodexRequestMode(form.requestMode),
-    [form.requestMode]
-  );
-  const toCodexTestPath = useMemo(
-    () => normalizeToCodexTestPath(form.testPath, form.requestMode),
-    [form.requestMode, form.testPath]
-  );
   const baseUrl = String(form.baseUrl ?? '').trim();
+  const toCodexTestPath = useMemo(() => inferToCodexTestPathFromBaseUrl(baseUrl), [baseUrl]);
+  const toCodexRequestMode = toCodexTestPath === TOCODEX_DEFAULT_CHAT_PATH ? 'chat' : 'responses';
   const toCodexTestMode = toCodexTestPath === TOCODEX_DEFAULT_CHAT_PATH ? 'chat' : 'responses';
   const availableModels = useMemo(
     () => form.modelEntries.map((entry) => entry.name.trim()).filter(Boolean),
@@ -1003,7 +998,7 @@ export function AiProvidersCodexEditPage({
       if (isToCodex) {
         const endpoint = buildToCodexEndpoint(
           form.baseUrl ?? '',
-          form.modelsPath,
+          TOCODEX_DEFAULT_MODELS_PATH,
           TOCODEX_DEFAULT_MODELS_PATH
         );
         if (!endpoint) {
@@ -1059,7 +1054,6 @@ export function AiProvidersCodexEditPage({
   }, [
     form.baseUrl,
     form.headers,
-    form.modelsPath,
     isToCodex,
     modelDiscoveryApiKey,
     modelDiscoveryHmacSecret,
@@ -1076,7 +1070,11 @@ export function AiProvidersCodexEditPage({
     }
 
     const nextEndpoint = isToCodex
-      ? buildToCodexEndpoint(form.baseUrl ?? '', form.modelsPath, TOCODEX_DEFAULT_MODELS_PATH)
+      ? buildToCodexEndpoint(
+          form.baseUrl ?? '',
+          TOCODEX_DEFAULT_MODELS_PATH,
+          TOCODEX_DEFAULT_MODELS_PATH
+        )
       : modelsApi.buildV1ModelsEndpoint(form.baseUrl ?? '');
     setModelDiscoveryEndpoint(nextEndpoint);
     setDiscoveredModels([]);
@@ -1110,7 +1108,6 @@ export function AiProvidersCodexEditPage({
     fetchCodexModelDiscovery,
     form.baseUrl,
     form.headers,
-    form.modelsPath,
     isToCodex,
     modelDiscoveryApiKey,
     modelDiscoveryHmacSecret,
@@ -1203,8 +1200,8 @@ export function AiProvidersCodexEditPage({
     setSaving(true);
     setError('');
     try {
-      const normalizedRequestMode = normalizeToCodexRequestMode(form.requestMode);
-      const normalizedTestPath = normalizeToCodexTestPath(form.testPath, normalizedRequestMode);
+      const inferredTestPath = inferToCodexTestPathFromBaseUrl(baseUrl);
+      const inferredRequestMode = inferredTestPath === TOCODEX_DEFAULT_CHAT_PATH ? 'chat' : 'responses';
       const payload: ProviderKeyConfig = {
         apiKey: '',
         apiKeyEntries,
@@ -1213,14 +1210,12 @@ export function AiProvidersCodexEditPage({
         baseUrl,
         websockets: isToCodex ? undefined : Boolean(form.websockets),
         proxyUrl: form.proxyUrl?.trim() || undefined,
-        requestMode: isToCodex ? normalizedRequestMode : undefined,
-        chatPath: isToCodex ? form.chatPath?.trim() || undefined : undefined,
-        responsesPath: isToCodex ? form.responsesPath?.trim() || undefined : undefined,
-        responsesCompactPath: isToCodex
-          ? form.responsesCompactPath?.trim() || undefined
-          : undefined,
-        modelsPath: isToCodex ? form.modelsPath?.trim() || undefined : undefined,
-        testPath: isToCodex ? normalizedTestPath : undefined,
+        requestMode: isToCodex ? inferredRequestMode : undefined,
+        chatPath: undefined,
+        responsesPath: undefined,
+        responsesCompactPath: undefined,
+        modelsPath: undefined,
+        testPath: isToCodex ? inferredTestPath : undefined,
         headers: buildHeaderObject(form.headers),
         models: entriesToModels(form.modelEntries),
         excludedModels: parseExcludedModels(form.excludedText),
@@ -1528,32 +1523,7 @@ export function AiProvidersCodexEditPage({
               onChange={(e) => setForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
               disabled={disableControls || saving || isTestingKeys}
             />
-            {isToCodex ? (
-              <div className="form-group">
-                <label>{t('ai_providers.tocodex_request_mode_label')}</label>
-                <Select
-                  value={toCodexRequestMode}
-                  options={TOCODEX_REQUEST_MODE_OPTIONS.map((option) => ({
-                    value: option.value,
-                    label: t(option.labelKey),
-                  }))}
-                  onChange={(value) =>
-                    setForm((prev) => {
-                      const nextRequestMode = normalizeToCodexRequestMode(value);
-                      return {
-                        ...prev,
-                        requestMode: nextRequestMode,
-                        testPath: normalizeToCodexTestPath(prev.testPath, nextRequestMode),
-                      };
-                    })
-                  }
-                  className={styles.openaiTestSelect}
-                  ariaLabel={t('ai_providers.tocodex_request_mode_label')}
-                  disabled={disableControls || saving || isTestingKeys}
-                />
-                <div className="hint">{t('ai_providers.tocodex_request_mode_hint')}</div>
-              </div>
-            ) : (
+            {!isToCodex && (
               <div className="form-group">
                 <label>{t('ai_providers.codex_websockets_label')}</label>
                 <ToggleSwitch
@@ -1571,52 +1541,6 @@ export function AiProvidersCodexEditPage({
               onChange={(e) => setForm((prev) => ({ ...prev, proxyUrl: e.target.value }))}
               disabled={disableControls || saving || isTestingKeys}
             />
-            {isToCodex && (
-              <>
-                <Input
-                  label={t('ai_providers.tocodex_chat_path_label')}
-                  value={form.chatPath ?? ''}
-                  onChange={(e) => setForm((prev) => ({ ...prev, chatPath: e.target.value }))}
-                  disabled={disableControls || saving || isTestingKeys}
-                />
-                <Input
-                  label={t('ai_providers.tocodex_responses_path_label')}
-                  value={form.responsesPath ?? ''}
-                  onChange={(e) => setForm((prev) => ({ ...prev, responsesPath: e.target.value }))}
-                  disabled={disableControls || saving || isTestingKeys}
-                />
-                <Input
-                  label={t('ai_providers.tocodex_responses_compact_path_label')}
-                  value={form.responsesCompactPath ?? ''}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, responsesCompactPath: e.target.value }))
-                  }
-                  disabled={disableControls || saving || isTestingKeys}
-                />
-                <Input
-                  label={t('ai_providers.tocodex_models_path_label')}
-                  value={form.modelsPath ?? ''}
-                  onChange={(e) => setForm((prev) => ({ ...prev, modelsPath: e.target.value }))}
-                  disabled={disableControls || saving || isTestingKeys}
-                />
-                <div className="form-group">
-                  <label>{t('ai_providers.tocodex_test_path_label')}</label>
-                  <Select
-                    value={toCodexTestPath}
-                    options={TOCODEX_TEST_PATH_SELECT_OPTIONS}
-                    onChange={(value) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        testPath: normalizeToCodexTestPath(value, prev.requestMode),
-                      }))
-                    }
-                    className={styles.openaiTestSelect}
-                    ariaLabel={t('ai_providers.tocodex_test_path_label')}
-                    disabled={disableControls || saving || isTestingKeys}
-                  />
-                </div>
-              </>
-            )}
             <HeaderInputList
               entries={form.headers}
               onChange={(entries) => setForm((prev) => ({ ...prev, headers: entries }))}
@@ -1723,22 +1647,26 @@ export function AiProvidersCodexEditPage({
                 >
                   {t('ai_providers.codex_test_all_action')}
                 </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={disableFailedKeys}
-                  disabled={saving || disableControls || isTestingKeys || failedKeyIndexes.length === 0}
-                >
-                  {t('ai_providers.codex_disable_failed_action')}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={removeFailedKeys}
-                  disabled={saving || disableControls || isTestingKeys || failedKeyIndexes.length === 0}
-                >
-                  {t('ai_providers.codex_remove_failed_action')}
-                </Button>
+                <div className={styles.modelTestBatchActions}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={disableFailedKeys}
+                    disabled={saving || disableControls || isTestingKeys || failedKeyIndexes.length === 0}
+                    className={styles.modelTestBatchButton}
+                  >
+                    {t('ai_providers.codex_disable_failed_action')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={removeFailedKeys}
+                    disabled={saving || disableControls || isTestingKeys || failedKeyIndexes.length === 0}
+                    className={styles.modelTestBatchButton}
+                  >
+                    {t('ai_providers.codex_remove_failed_action')}
+                  </Button>
+                </div>
               </div>
             </div>
             {testMessage && (

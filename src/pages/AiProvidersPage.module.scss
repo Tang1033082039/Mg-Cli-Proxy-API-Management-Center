@@ -781,9 +781,15 @@
   gap: $spacing-xs;
   flex: 1;
   min-width: 0;
+  flex-wrap: wrap;
 
   @include mobile {
     justify-content: flex-start;
+    width: 100%;
+  }
+
+  :global(.btn) {
+    min-height: 32px;
   }
 }
 
@@ -945,6 +951,26 @@
 }
 
 .modelTestAllButton {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.modelTestBatchActions {
+  display: inline-flex;
+  align-items: center;
+  gap: $spacing-xs;
+  padding-left: $spacing-xs;
+  margin-left: $spacing-xs;
+  border-left: 1px solid var(--border-color);
+
+  @include mobile {
+    padding-left: 0;
+    margin-left: 0;
+    border-left: none;
+  }
+}
+
+.modelTestBatchButton {
   white-space: nowrap;
   flex-shrink: 0;
 }
