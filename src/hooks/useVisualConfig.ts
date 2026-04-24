@@ -47,6 +47,25 @@ function parseApiKeysText(raw: unknown): string {
   return keys.join('\n');
 }
 
+function parseStringList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => (typeof item === 'string' ? item.trim() : '')).filter(Boolean);
+}
+
+function parseApiKeyModelAccess(raw: unknown, keysText: string): Record<string, string[]> {
+  const record = asRecord(raw);
+  if (!record) return {};
+  const keys = new Set(keysText.split('\n').map((key) => key.trim()).filter(Boolean));
+  const out: Record<string, string[]> = {};
+  Object.entries(record).forEach(([key, value]) => {
+    const trimmedKey = key.trim();
+    if (!trimmedKey || (keys.size > 0 && !keys.has(trimmedKey))) return;
+    const models = parseStringList(value);
+    if (models.length > 0) out[trimmedKey] = models;
+  });
+  return out;
+}
+
 function resolveApiKeysText(parsed: Record<string, unknown>): string {
   if (Object.prototype.hasOwnProperty.call(parsed, 'api-keys')) {
     return parseApiKeysText(parsed['api-keys']);
@@ -62,6 +81,10 @@ function resolveApiKeysText(parsed: Record<string, unknown>): string {
   }
 
   return parseApiKeysText(configApiKeyProvider['api-keys']);
+}
+
+function resolveApiKeyModelAccess(parsed: Record<string, unknown>, keysText: string): Record<string, string[]> {
+  return parseApiKeyModelAccess(parsed['api-key-model-access'], keysText);
 }
 
 type YamlDocument = ReturnType<typeof parseDocument>;
@@ -587,6 +610,12 @@ function getNextDirtyFields(
   if (Object.prototype.hasOwnProperty.call(patch, 'apiKeysText')) {
     updateDirty('apiKeysText', nextValues.apiKeysText === baselineValues.apiKeysText);
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'apiKeyModelAccess')) {
+    updateDirty(
+      'apiKeyModelAccess',
+      JSON.stringify(nextValues.apiKeyModelAccess) === JSON.stringify(baselineValues.apiKeyModelAccess)
+    );
+  }
   if (Object.prototype.hasOwnProperty.call(patch, 'debug')) {
     updateDirty('debug', nextValues.debug === baselineValues.debug);
   }
@@ -805,6 +834,7 @@ export function useVisualConfig() {
       const routing = asRecord(parsed.routing);
       const payload = asRecord(parsed.payload);
       const streaming = asRecord(parsed.streaming);
+      const apiKeysText = resolveApiKeysText(parsed);
 
       const newValues: VisualConfigValues = {
         host: typeof parsed.host === 'string' ? parsed.host : '',
@@ -828,7 +858,8 @@ export function useVisualConfig() {
               : '',
 
         authDir: typeof parsed['auth-dir'] === 'string' ? parsed['auth-dir'] : '',
-        apiKeysText: resolveApiKeysText(parsed),
+        apiKeysText,
+        apiKeyModelAccess: resolveApiKeyModelAccess(parsed, apiKeysText),
 
         debug: Boolean(parsed.debug),
         commercialMode: Boolean(parsed['commercial-mode']),
@@ -939,8 +970,24 @@ export function useVisualConfig() {
           .filter(Boolean);
         if (apiKeys.length > 0) {
           doc.setIn(['api-keys'], apiKeys);
+          const modelAccess = Object.fromEntries(
+            apiKeys
+              .map((key) => [
+                key,
+                (values.apiKeyModelAccess[key] ?? []).map((model) => model.trim()).filter(Boolean),
+              ] as const)
+              .filter(([, models]) => models.length > 0)
+          );
+          if (Object.keys(modelAccess).length > 0) {
+            doc.setIn(['api-key-model-access'], modelAccess);
+          } else if (docHas(doc, ['api-key-model-access'])) {
+            doc.deleteIn(['api-key-model-access']);
+          }
         } else if (docHas(doc, ['api-keys'])) {
           doc.deleteIn(['api-keys']);
+          if (docHas(doc, ['api-key-model-access'])) {
+            doc.deleteIn(['api-key-model-access']);
+          }
         }
         deleteLegacyApiKeysProvider(doc);
 

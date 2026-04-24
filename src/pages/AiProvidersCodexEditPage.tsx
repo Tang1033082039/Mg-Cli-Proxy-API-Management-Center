@@ -55,7 +55,19 @@ type CodexKeyTestStatus = {
 const CODEX_TEST_TIMEOUT_MS = 30_000;
 const CODEX_TEST_USER_AGENT =
   'codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)';
+const TOCODEX_TEST_USER_AGENT = 'ToCodex/3.1.3';
 const TOCODEX_DEFAULT_HMAC_SECRET = 'tc-hmac-s3cr3t-k3y-2026-tocodex-platform';
+
+const withDefaultHeader = (
+  headers: Record<string, string>,
+  headerName: string,
+  headerValue: string
+): Record<string, string> => {
+  if (Object.keys(headers).some((key) => key.toLowerCase() === headerName.toLowerCase())) {
+    return headers;
+  }
+  return { ...headers, [headerName]: headerValue };
+};
 
 const inferToCodexTestPathFromBaseUrl = (
   baseUrl: string
@@ -746,7 +758,9 @@ export function AiProvidersCodexEditPage({
         return false;
       }
 
-      const customHeaders = buildHeaderObject(form.headers);
+      const customHeaders = isToCodex
+        ? withDefaultHeader(buildHeaderObject(form.headers), 'User-Agent', TOCODEX_TEST_USER_AGENT)
+        : buildHeaderObject(form.headers);
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         Accept: 'application/json',
@@ -999,7 +1013,9 @@ export function AiProvidersCodexEditPage({
     setModelDiscoveryError('');
 
     try {
-      const headerObject = buildHeaderObject(form.headers);
+      const headerObject = isToCodex
+        ? withDefaultHeader(buildHeaderObject(form.headers), 'User-Agent', TOCODEX_TEST_USER_AGENT)
+        : buildHeaderObject(form.headers);
       let list: ModelInfo[] = [];
       if (isToCodex) {
         const endpoint = buildToCodexEndpoint(

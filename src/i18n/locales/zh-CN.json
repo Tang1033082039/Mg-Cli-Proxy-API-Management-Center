@@ -1336,6 +1336,11 @@
         "input_label": "API 密钥",
         "input_placeholder": "粘贴你的 API 密钥",
         "input_hint": "此处仅修改本地配置文件内容，不会自动同步到 API 密钥管理接口",
+        "models_label": "可用模型限制（可选）",
+        "models_placeholder": "留空表示允许全部模型\n每行一个模型，例如：gpt-5.1-codex",
+        "models_hint": "只限制这个访问密钥可查看和请求的模型；留空不限制。",
+        "models_all": "允许全部模型",
+        "models_limited": "仅允许 {{count}} 个模型",
         "error_empty": "请输入 API 密钥",
         "error_invalid": "API 密钥包含无效字符"
       },
