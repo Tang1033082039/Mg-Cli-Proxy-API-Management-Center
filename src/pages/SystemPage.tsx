@@ -92,6 +92,7 @@ export function SystemPage() {
   const [requestLogTouched, setRequestLogTouched] = useState(false);
   const [requestLogSaving, setRequestLogSaving] = useState(false);
   const [checkingVersion, setCheckingVersion] = useState(false);
+  const [updatingPanel, setUpdatingPanel] = useState(false);
 
   const apiKeysCache = useRef<string[]>([]);
   const versionTapCount = useRef(0);
@@ -314,6 +315,21 @@ export function SystemPage() {
     }
   }, [auth.serverVersion, showNotification, t]);
 
+  const handleManagementPanelUpdate = useCallback(async () => {
+    setUpdatingPanel(true);
+    try {
+      await versionApi.updateManagementPanel();
+      showNotification(t('system_info.panel_update_success'), 'success');
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+      const suffix = message ? `: ${message}` : '';
+      showNotification(`${t('system_info.panel_update_error')}${suffix}`, 'error');
+    } finally {
+      setUpdatingPanel(false);
+    }
+  }, [showNotification, t]);
+
   useEffect(() => {
     fetchConfig().catch(() => {
       // ignore
@@ -350,16 +366,38 @@ export function SystemPage() {
           </div>
 
           <div className={styles.aboutInfoGrid}>
-            <button
-              type="button"
+            <div
+              role="button"
+              tabIndex={0}
               className={`${styles.infoTile} ${styles.tapTile}`}
               onClick={handleInfoVersionTap}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  handleInfoVersionTap();
+                }
+              }}
             >
               <div className={styles.tileHeader}>
                 <div className={styles.tileLabel}>{t('footer.version')}</div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className={styles.tileAction}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void handleManagementPanelUpdate();
+                  }}
+                  loading={updatingPanel}
+                  title={t('system_info.panel_update_button')}
+                  aria-label={t('system_info.panel_update_button')}
+                >
+                  {t('system_info.panel_update_button')}
+                </Button>
               </div>
               <div className={styles.tileValue}>{appVersion}</div>
-            </button>
+            </div>
 
             <div className={styles.infoTile}>
               <div className={styles.tileHeader}>
