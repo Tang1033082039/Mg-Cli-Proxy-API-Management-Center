@@ -1,7 +1,13 @@
 import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card } from '@/components/ui/Card';
-import { formatCompactNumber, formatPercentage, formatUsd, type ApiStats } from '@/utils/usage';
+import {
+  formatCompactNumber,
+  formatPercentage,
+  formatUsd,
+  type ApiModelStats,
+  type ApiStats,
+} from '@/utils/usage';
 import styles from '@/pages/UsagePage.module.scss';
 
 export interface ApiDetailsCardProps {
@@ -12,6 +18,121 @@ export interface ApiDetailsCardProps {
 
 type ApiSortKey = 'endpoint' | 'requests' | 'tokens' | 'cost' | 'cacheRate';
 type SortDir = 'asc' | 'desc';
+
+type ApiMetricSource = Pick<
+  ApiStats,
+  | 'inputTokens'
+  | 'outputTokens'
+  | 'cachedTokens'
+  | 'reasoningTokens'
+  | 'cacheRate'
+  | 'inputCost'
+  | 'outputCost'
+  | 'cacheCost'
+> & {
+  requests: number;
+  successCount: number;
+  failureCount: number;
+  totalTokens: number;
+  totalCost: number;
+};
+
+const getApiMetrics = (api: ApiStats): ApiMetricSource => ({
+  requests: api.totalRequests,
+  successCount: api.successCount,
+  failureCount: api.failureCount,
+  totalTokens: api.totalTokens,
+  totalCost: api.totalCost,
+  inputTokens: api.inputTokens,
+  outputTokens: api.outputTokens,
+  cachedTokens: api.cachedTokens,
+  reasoningTokens: api.reasoningTokens,
+  cacheRate: api.cacheRate,
+  inputCost: api.inputCost,
+  outputCost: api.outputCost,
+  cacheCost: api.cacheCost,
+});
+
+const getModelMetrics = (stats: ApiModelStats): ApiMetricSource => ({
+  requests: stats.requests,
+  successCount: stats.successCount,
+  failureCount: stats.failureCount,
+  totalTokens: stats.tokens,
+  totalCost: stats.cost,
+  inputTokens: stats.inputTokens,
+  outputTokens: stats.outputTokens,
+  cachedTokens: stats.cachedTokens,
+  reasoningTokens: stats.reasoningTokens,
+  cacheRate: stats.cacheRate,
+  inputCost: stats.inputCost,
+  outputCost: stats.outputCost,
+  cacheCost: stats.cacheCost,
+});
+
+function ApiMetricsSummary({
+  metrics,
+  hasPrices,
+}: {
+  metrics: ApiMetricSource;
+  hasPrices: boolean;
+}) {
+  const { t } = useTranslation();
+  const costValue = hasPrices ? formatUsd(metrics.totalCost) : '--';
+  const inputCost = hasPrices ? formatUsd(metrics.inputCost) : '--';
+  const outputCost = hasPrices ? formatUsd(metrics.outputCost) : '--';
+  const cacheCost = hasPrices ? formatUsd(metrics.cacheCost) : '--';
+
+  return (
+    <div className={styles.apiMetricsSummary}>
+      <div className={styles.apiSummaryGrid}>
+        <span className={styles.apiSummaryPill}>
+          <span>{t('usage_stats.requests_count')}</span>
+          <strong>{metrics.requests.toLocaleString()}</strong>
+          <em>
+            <span className={styles.statSuccess}>{metrics.successCount.toLocaleString()}</span>{' '}
+            <span className={styles.statFailure}>{metrics.failureCount.toLocaleString()}</span>
+          </em>
+        </span>
+        <span className={styles.apiSummaryPill}>
+          <span>{t('usage_stats.tokens_count')}</span>
+          <strong>{formatCompactNumber(metrics.totalTokens)}</strong>
+        </span>
+        <span className={styles.apiSummaryPill}>
+          <span>{t('usage_stats.total_cost')}</span>
+          <strong>{costValue}</strong>
+        </span>
+      </div>
+
+      <div className={styles.apiBreakdownGrid}>
+        <span className={styles.apiBreakdownItem}>
+          <span>{t('usage_stats.input_tokens')}</span>
+          <strong>{formatCompactNumber(metrics.inputTokens)}</strong>
+          <em>{inputCost}</em>
+        </span>
+        <span className={styles.apiBreakdownItem}>
+          <span>{t('usage_stats.output_tokens')}</span>
+          <strong>{formatCompactNumber(metrics.outputTokens)}</strong>
+          <em>{outputCost}</em>
+        </span>
+        <span className={styles.apiBreakdownItem}>
+          <span>{t('usage_stats.cached_tokens')}</span>
+          <strong>{formatCompactNumber(metrics.cachedTokens)}</strong>
+          <em>{cacheCost}</em>
+        </span>
+        <span className={styles.apiBreakdownItem}>
+          <span>{t('usage_stats.cache_rate')}</span>
+          <strong>{formatPercentage(metrics.cacheRate)}</strong>
+        </span>
+        {metrics.reasoningTokens > 0 && (
+          <span className={styles.apiBreakdownItem}>
+            <span>{t('usage_stats.reasoning_tokens')}</span>
+            <strong>{formatCompactNumber(metrics.reasoningTokens)}</strong>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export function ApiDetailsCard({ apiStats, loading, hasPrices }: ApiDetailsCardProps) {
   const { t } = useTranslation();
@@ -104,57 +225,7 @@ export function ApiDetailsCard({ apiStats, loading, hasPrices }: ApiDetailsCardP
                     >
                       <div className={styles.apiInfo}>
                         <span className={styles.apiEndpoint}>{api.endpoint}</span>
-                        <div className={styles.apiStats}>
-                          <span className={styles.apiBadge}>
-                            <span className={styles.requestCountCell}>
-                              <span>
-                                {t('usage_stats.requests_count')}: {api.totalRequests.toLocaleString()}
-                              </span>
-                              <span className={styles.requestBreakdown}>
-                                (<span className={styles.statSuccess}>{api.successCount.toLocaleString()}</span>{' '}
-                                <span className={styles.statFailure}>{api.failureCount.toLocaleString()}</span>)
-                              </span>
-                            </span>
-                          </span>
-                          <span className={styles.apiBadge}>
-                            {t('usage_stats.tokens_count')}: {formatCompactNumber(api.totalTokens)}
-                          </span>
-                          <span className={styles.apiBadge}>
-                            {t('usage_stats.input_tokens')}: {formatCompactNumber(api.inputTokens)}
-                          </span>
-                          <span className={styles.apiBadge}>
-                            {t('usage_stats.output_tokens')}: {formatCompactNumber(api.outputTokens)}
-                          </span>
-                          <span className={styles.apiBadge}>
-                            {t('usage_stats.cached_tokens')}: {formatCompactNumber(api.cachedTokens)}
-                          </span>
-                          <span className={styles.apiBadge}>
-                            {t('usage_stats.cache_rate')}: {formatPercentage(api.cacheRate)}
-                          </span>
-                          <span className={styles.apiBadge}>
-                            {t('usage_stats.reasoning_tokens')}: {formatCompactNumber(api.reasoningTokens)}
-                          </span>
-                          {hasPrices && (
-                            <span className={styles.apiBadge}>
-                              {t('usage_stats.total_cost')}: {formatUsd(api.totalCost)}
-                            </span>
-                          )}
-                          {hasPrices && (
-                            <span className={styles.apiBadge}>
-                              {t('usage_stats.input_cost')}: {formatUsd(api.inputCost)}
-                            </span>
-                          )}
-                          {hasPrices && (
-                            <span className={styles.apiBadge}>
-                              {t('usage_stats.output_cost')}: {formatUsd(api.outputCost)}
-                            </span>
-                          )}
-                          {hasPrices && (
-                            <span className={styles.apiBadge}>
-                              {t('usage_stats.cache_cost')}: {formatUsd(api.cacheCost)}
-                            </span>
-                          )}
-                        </div>
+                        <ApiMetricsSummary metrics={getApiMetrics(api)} hasPrices={hasPrices} />
                       </div>
                       <span className={styles.expandIcon}>
                         {isExpanded ? '▼' : '▶'}
@@ -167,57 +238,7 @@ export function ApiDetailsCard({ apiStats, loading, hasPrices }: ApiDetailsCardP
                             <div className={styles.modelRowHeader}>
                               <span className={styles.modelName}>{model}</span>
                             </div>
-                            <div className={styles.modelRowStats}>
-                              <span className={styles.apiBadge}>
-                                <span className={styles.requestCountCell}>
-                                  <span>
-                                    {t('usage_stats.requests_count')}: {stats.requests.toLocaleString()}
-                                  </span>
-                                  <span className={styles.requestBreakdown}>
-                                    (<span className={styles.statSuccess}>{stats.successCount.toLocaleString()}</span>{' '}
-                                    <span className={styles.statFailure}>{stats.failureCount.toLocaleString()}</span>)
-                                  </span>
-                                </span>
-                              </span>
-                              <span className={styles.apiBadge}>
-                                {t('usage_stats.tokens_count')}: {formatCompactNumber(stats.tokens)}
-                              </span>
-                              <span className={styles.apiBadge}>
-                                {t('usage_stats.input_tokens')}: {formatCompactNumber(stats.inputTokens)}
-                              </span>
-                              <span className={styles.apiBadge}>
-                                {t('usage_stats.output_tokens')}: {formatCompactNumber(stats.outputTokens)}
-                              </span>
-                              <span className={styles.apiBadge}>
-                                {t('usage_stats.cached_tokens')}: {formatCompactNumber(stats.cachedTokens)}
-                              </span>
-                              <span className={styles.apiBadge}>
-                                {t('usage_stats.cache_rate')}: {formatPercentage(stats.cacheRate)}
-                              </span>
-                              <span className={styles.apiBadge}>
-                                {t('usage_stats.reasoning_tokens')}: {formatCompactNumber(stats.reasoningTokens)}
-                              </span>
-                              {hasPrices && (
-                                <span className={styles.apiBadge}>
-                                  {t('usage_stats.total_cost')}: {formatUsd(stats.cost)}
-                                </span>
-                              )}
-                              {hasPrices && (
-                                <span className={styles.apiBadge}>
-                                  {t('usage_stats.input_cost')}: {formatUsd(stats.inputCost)}
-                                </span>
-                              )}
-                              {hasPrices && (
-                                <span className={styles.apiBadge}>
-                                  {t('usage_stats.output_cost')}: {formatUsd(stats.outputCost)}
-                                </span>
-                              )}
-                              {hasPrices && (
-                                <span className={styles.apiBadge}>
-                                  {t('usage_stats.cache_cost')}: {formatUsd(stats.cacheCost)}
-                                </span>
-                              )}
-                            </div>
+                            <ApiMetricsSummary metrics={getModelMetrics(stats)} hasPrices={hasPrices} />
                           </div>
                         ))}
                       </div>

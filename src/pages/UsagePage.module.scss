@@ -169,7 +169,7 @@
   }
 }
 
-.statCard:nth-child(-n + 2) {
+.statCard:nth-child(-n + 3) {
   grid-column: span 6;
 
   .statValue {
@@ -178,7 +178,7 @@
 }
 
 @include mobile {
-  .statCard:nth-child(-n + 2) {
+  .statCard:nth-child(-n + 3) {
     grid-column: auto;
 
     .statValue {
@@ -296,6 +296,41 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+.providerCacheRateList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+
+  @include mobile {
+    grid-template-columns: 1fr;
+  }
+}
+
+.providerCacheRateItem {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: $radius-sm;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+
+  span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  strong {
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+  }
 }
 
 .statMetaDot {
@@ -427,24 +462,65 @@
   word-break: break-all;
 }
 
-.apiStats {
+.apiMetricsSummary {
   display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
 }
 
-.apiBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--text-secondary);
-  background-color: var(--bg-primary);
+.apiSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+
+  @include mobile {
+    grid-template-columns: 1fr;
+  }
+}
+
+.apiSummaryPill,
+.apiBreakdownItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 9px;
   border: 1px solid var(--border-color);
-  padding: 2px 8px;
-  border-radius: $radius-full;
+  background: var(--bg-primary);
+  border-radius: $radius-md;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.apiSummaryPill strong,
+.apiBreakdownItem strong {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.apiSummaryPill em,
+.apiBreakdownItem em {
+  color: var(--text-tertiary);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.apiBreakdownGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(110px, 1fr));
+  gap: 6px;
+
+  @include tablet {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  @include mobile {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .expandIcon {

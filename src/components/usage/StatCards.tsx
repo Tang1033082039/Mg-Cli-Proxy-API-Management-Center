@@ -4,6 +4,7 @@ import { Line } from 'react-chartjs-2';
 import {
   IconDiamond,
   IconDollarSign,
+  IconRefreshCw,
   IconSatellite,
   IconTimer,
   IconTrendingUp,
@@ -19,6 +20,7 @@ import {
   formatPercentage,
   formatUsd,
   collectUsageDetails,
+  extractTokenMetrics,
   extractTotalTokens,
   type ModelPrice,
 } from '@/utils/usage';
@@ -134,6 +136,35 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
     usageMetrics.tokens.cachedTokens,
     displayTotalTokens
   );
+  const providerCacheRates = useMemo(() => {
+    const buckets = new Map<string, { totalTokens: number; cachedTokens: number }>();
+    collectUsageDetails(usage).forEach((detail) => {
+      const source = String(detail.source ?? '').toLowerCase();
+      const label = source.includes('claude')
+        ? 'Claude'
+        : source.includes('codex')
+          ? 'Codex'
+          : source.includes('openai')
+            ? 'OpenAI'
+            : source.includes('vertex')
+              ? 'Vertex'
+              : source.includes('gemini')
+                ? 'Gemini'
+                : t('usage_stats.other_provider');
+      const tokenMetrics = extractTokenMetrics(detail);
+      const current = buckets.get(label) ?? { totalTokens: 0, cachedTokens: 0 };
+      current.totalTokens += tokenMetrics.totalTokens;
+      current.cachedTokens += tokenMetrics.cachedTokens;
+      buckets.set(label, current);
+    });
+    return Array.from(buckets.entries())
+      .map(([label, bucket]) => ({
+        label,
+        cacheRate: calculateCacheRate(bucket.cachedTokens, bucket.totalTokens),
+      }))
+      .sort((a, b) => b.cacheRate - a.cacheRate)
+      .slice(0, 5);
+  }, [t, usage]);
 
   const statsCards: StatCardData[] = [
     {
@@ -190,13 +221,31 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
             {t('usage_stats.reasoning_tokens')}:{' '}
             {loading ? '-' : formatCompactNumber(usageMetrics.tokens.reasoningTokens)}
           </span>
-          <span className={styles.statMetaItem}>
-            {t('usage_stats.cache_rate')}:{' '}
-            {loading ? '-' : formatPercentage(displayCacheRate)}
-          </span>
         </>
       ),
       trend: sparklines.tokens,
+    },
+    {
+      key: 'cacheRate',
+      label: t('usage_stats.cache_rate'),
+      icon: <IconRefreshCw size={16} />,
+      accent: '#14b8a6',
+      accentSoft: 'rgba(20, 184, 166, 0.18)',
+      accentBorder: 'rgba(20, 184, 166, 0.35)',
+      value: loading ? '-' : formatPercentage(displayCacheRate),
+      meta: providerCacheRates.length ? (
+        <div className={styles.providerCacheRateList}>
+          {providerCacheRates.map((item) => (
+            <span key={item.label} className={styles.providerCacheRateItem}>
+              <span>{item.label}</span>
+              <strong>{formatPercentage(item.cacheRate)}</strong>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <span className={styles.statMetaItem}>{t('usage_stats.no_data')}</span>
+      ),
+      trend: null,
     },
     {
       key: 'rpm',
