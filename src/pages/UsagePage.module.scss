@@ -169,22 +169,8 @@
   }
 }
 
-.statCard:nth-child(-n + 3) {
-  grid-column: span 6;
-
-  .statValue {
-    font-size: 32px;
-  }
-}
-
-@include mobile {
-  .statCard:nth-child(-n + 3) {
-    grid-column: auto;
-
-    .statValue {
-      font-size: 28px;
-    }
-  }
+.statCard:nth-child(-n + 6) {
+  grid-column: span 4;
 }
 
 .statCardHeader {
@@ -300,9 +286,13 @@
 
 .providerCacheRateList {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   width: 100%;
+
+  @include tablet {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 
   @include mobile {
     grid-template-columns: 1fr;
@@ -351,13 +341,6 @@
   padding: 8px;
   height: 58px;
   border: 1px solid var(--border-color);
-}
-
-.statTrendPlaceholder {
-  width: 100%;
-  height: 100%;
-  background: var(--bg-secondary);
-  border-radius: $radius-md;
 }
 
 .sparkline {
@@ -417,18 +400,19 @@
 }
 
 .apiItem {
-  background-color: var(--bg-secondary);
-  border-radius: $radius-sm;
+  background-color: color-mix(in srgb, var(--bg-secondary) 78%, var(--bg-primary));
+  border-radius: $radius-md;
   border: 1px solid var(--border-color);
   overflow: hidden;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
 }
 
 .apiHeader {
   width: 100%;
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding: 10px;
+  align-items: flex-start;
+  padding: 12px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -458,7 +442,7 @@
 .apiEndpoint {
   font-weight: 600;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 14px;
   word-break: break-all;
 }
 
@@ -467,6 +451,10 @@
   flex-direction: column;
   gap: 8px;
   margin-top: 6px;
+}
+
+.statCard:nth-child(3) .statTrend {
+  display: none;
 }
 
 .apiSummaryGrid {
@@ -479,27 +467,39 @@
   }
 }
 
+.apiItem .apiSummaryGrid {
+  grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr);
+}
+
 .apiSummaryPill,
 .apiBreakdownItem {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
-  padding: 7px 9px;
+  padding: 9px 10px;
   border: 1px solid var(--border-color);
-  background: var(--bg-primary);
+  background: color-mix(in srgb, var(--bg-primary) 82%, var(--bg-tertiary));
   border-radius: $radius-md;
   color: var(--text-secondary);
   font-size: 11px;
   line-height: 1.35;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .apiSummaryPill strong,
 .apiBreakdownItem strong {
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+.apiSummaryPill span,
+.apiBreakdownItem span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .apiSummaryPill em,
@@ -511,7 +511,7 @@
 
 .apiBreakdownGrid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(110px, 1fr));
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
   gap: 6px;
 
   @include tablet {
@@ -523,6 +523,10 @@
   }
 }
 
+.apiItem .apiBreakdownGrid {
+  grid-template-columns: repeat(5, minmax(110px, 1fr));
+}
+
 .expandIcon {
   color: var(--text-secondary);
   font-size: 12px;
@@ -530,21 +534,20 @@
 }
 
 .apiModels {
-  padding: 10px;
-  padding-top: 0;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 10px;
   border-top: 1px solid var(--border-color);
   margin-top: 0;
-  padding-top: 10px;
+  background: color-mix(in srgb, var(--bg-secondary) 72%, transparent);
 }
 
 .modelRow {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 10px;
   background-color: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: $radius-md;

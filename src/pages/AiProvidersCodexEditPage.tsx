@@ -55,6 +55,7 @@ type CodexKeyTestStatus = {
 const CODEX_TEST_TIMEOUT_MS = 30_000;
 const CODEX_TEST_USER_AGENT =
   'codex-tui/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9 (codex-tui; 0.118.0)';
+const TOCODEX_DEFAULT_HMAC_SECRET = 'tc-hmac-s3cr3t-k3y-2026-tocodex-platform';
 
 const inferToCodexTestPathFromBaseUrl = (
   baseUrl: string
@@ -79,7 +80,7 @@ const buildKeyTestStatuses = (count: number): CodexKeyTestStatus[] =>
 
 const buildEmptyForm = (provider: ProviderKind = 'codex'): CodexFormState => ({
   apiKey: '',
-  apiKeyEntries: [buildApiKeyEntry()],
+  apiKeyEntries: [provider === 'tocodex' ? buildToCodexApiKeyEntry() : buildApiKeyEntry()],
   priority: undefined,
   prefix: '',
   baseUrl: '',
@@ -114,8 +115,17 @@ const hasUsableApiKeyEntry = (entry: ApiKeyEntry | undefined, requireHmacSecret:
   const apiKey = String(entry?.apiKey ?? '').trim();
   if (!apiKey) return false;
   if (!requireHmacSecret) return true;
-  return Boolean(String(entry?.hmacSecret ?? '').trim());
+  return Boolean(String(entry?.hmacSecret ?? '').trim() || TOCODEX_DEFAULT_HMAC_SECRET);
 };
+
+const buildToCodexApiKeyEntry = (input?: Partial<ApiKeyEntry>): ApiKeyEntry =>
+  buildApiKeyEntry({
+    ...input,
+    hmacSecret: String(input?.hmacSecret ?? '').trim() || TOCODEX_DEFAULT_HMAC_SECRET,
+  });
+
+const resolveToCodexHmacSecret = (entry?: Pick<ApiKeyEntry, 'hmacSecret'> | null): string =>
+  String(entry?.hmacSecret ?? '').trim() || TOCODEX_DEFAULT_HMAC_SECRET;
 
 function StatusLoadingIcon() {
   return (
@@ -226,12 +236,16 @@ const areNormalizedCodexApiKeyEntriesEqual = (
   return true;
 };
 
-const codexConfigToApiKeyEntries = (config: ProviderKeyConfig): ApiKeyEntry[] => {
+const codexConfigToApiKeyEntries = (
+  config: ProviderKeyConfig,
+  provider: ProviderKind = 'codex'
+): ApiKeyEntry[] => {
+  const buildEntry = provider === 'tocodex' ? buildToCodexApiKeyEntry : buildApiKeyEntry;
   const entries = config.apiKeyEntries?.length
     ? config.apiKeyEntries
     : config.apiKey
       ? [
-          buildApiKeyEntry({
+          buildEntry({
             apiKey: config.apiKey,
             hmacSecret: config.hmacSecret,
             proxyUrl: config.proxyUrl,
@@ -241,7 +255,7 @@ const codexConfigToApiKeyEntries = (config: ProviderKeyConfig): ApiKeyEntry[] =>
       : [];
   return entries.length
     ? entries.map((entry) =>
-        buildApiKeyEntry({
+        buildEntry({
           apiKey: entry.apiKey,
           hmacSecret: entry.hmacSecret,
           proxyUrl: entry.proxyUrl,
@@ -249,7 +263,7 @@ const codexConfigToApiKeyEntries = (config: ProviderKeyConfig): ApiKeyEntry[] =>
           disabled: entry.disabled,
         })
       )
-    : [buildApiKeyEntry()];
+    : [buildEntry()];
 };
 
 type CodexFormBaseline = {
@@ -411,7 +425,7 @@ export function AiProvidersCodexEditPage({
         responsesCompactPath: isToCodex ? '' : String(initialData.responsesCompactPath ?? ''),
         modelsPath: isToCodex ? '' : String(initialData.modelsPath ?? ''),
         testPath: isToCodex ? '' : String(initialData.testPath ?? ''),
-        apiKeyEntries: codexConfigToApiKeyEntries(initialData),
+        apiKeyEntries: codexConfigToApiKeyEntries(initialData, provider),
         websockets: Boolean(initialData.websockets),
         headers: headersToEntries(initialData.headers),
         modelEntries: modelsToEntries(initialData.models),
@@ -534,8 +548,11 @@ export function AiProvidersCodexEditPage({
     [form.apiKey, modelDiscoveryEntry]
   );
   const modelDiscoveryHmacSecret = useMemo(
-    () => modelDiscoveryEntry?.hmacSecret?.trim() || form.hmacSecret?.trim() || '',
-    [form.hmacSecret, modelDiscoveryEntry]
+    () =>
+      isToCodex
+        ? resolveToCodexHmacSecret(modelDiscoveryEntry)
+        : modelDiscoveryEntry?.hmacSecret?.trim() || form.hmacSecret?.trim() || '',
+    [form.hmacSecret, isToCodex, modelDiscoveryEntry]
   );
   const modelDiscoveryProxyUrl = useMemo(
     () => modelDiscoveryEntry?.proxyUrl?.trim() || form.proxyUrl?.trim() || '',
@@ -721,13 +738,7 @@ export function AiProvidersCodexEditPage({
         });
         return false;
       }
-      if (isToCodex && !keyEntry?.hmacSecret?.trim()) {
-        setKeyTestStatus(keyIndex, {
-          status: 'error',
-          message: t('notification.tocodex_hmac_secret_required'),
-        });
-        return false;
-      }
+      const hmacSecret = isToCodex ? resolveToCodexHmacSecret(keyEntry) : '';
 
       const modelName = testModel.trim() || availableModels[0] || '';
       if (!modelName) {
@@ -757,7 +768,7 @@ export function AiProvidersCodexEditPage({
               method: 'POST',
               endpoint,
               apiKey: keyEntry.apiKey.trim(),
-              hmacSecret: keyEntry.hmacSecret?.trim() || '',
+              hmacSecret,
               customHeaders,
             })
           : headers;
@@ -887,13 +898,6 @@ export function AiProvidersCodexEditPage({
     const validKeyIndexes = form.apiKeyEntries
       .map((entry, index) => (hasUsableApiKeyEntry(entry, isToCodex) ? index : -1))
       .filter((index) => index >= 0);
-    if (isToCodex && form.apiKeyEntries.some((entry) => entry.apiKey?.trim() && !entry.hmacSecret?.trim())) {
-      const message = t('notification.tocodex_hmac_secret_required');
-      setTestStatus('error');
-      setTestMessage(message);
-      showNotification(message, 'error');
-      return;
-    }
     if (validKeyIndexes.length === 0) {
       const message = t(
         isToCodex ? 'notification.tocodex_test_key_required' : 'notification.codex_test_key_required'
@@ -972,7 +976,9 @@ export function AiProvidersCodexEditPage({
       const nextEntries = prev.apiKeyEntries.filter((_, index) => !failedSet.has(index));
       return {
         ...prev,
-        apiKeyEntries: nextEntries.length ? nextEntries : [buildApiKeyEntry()],
+        apiKeyEntries: nextEntries.length
+          ? nextEntries
+          : [isToCodex ? buildToCodexApiKeyEntry() : buildApiKeyEntry()],
       };
     });
     setKeyTestStatuses((prev) => {
@@ -985,7 +991,7 @@ export function AiProvidersCodexEditPage({
       t('notification.codex_failed_keys_removed', { count: failedKeyIndexes.length }),
       'success'
     );
-  }, [failedKeyIndexes, showNotification, t]);
+  }, [failedKeyIndexes, isToCodex, showNotification, t]);
 
   const fetchCodexModelDiscovery = useCallback(async () => {
     const requestId = (modelDiscoveryRequestIdRef.current += 1);
@@ -1180,15 +1186,11 @@ export function AiProvidersCodexEditPage({
     const apiKeyEntries = form.apiKeyEntries
       .map((entry) => ({
         apiKey: entry.apiKey.trim(),
-        hmacSecret: entry.hmacSecret?.trim() || undefined,
+        hmacSecret: isToCodex ? resolveToCodexHmacSecret(entry) : entry.hmacSecret?.trim() || undefined,
         proxyUrl: entry.proxyUrl?.trim() || undefined,
         disabled: entry.disabled === true,
       }))
       .filter((entry) => entry.apiKey);
-    if (isToCodex && apiKeyEntries.some((entry) => !entry.hmacSecret)) {
-      showNotification(t('notification.tocodex_hmac_secret_required'), 'error');
-      return;
-    }
     if (!apiKeyEntries.length) {
       showNotification(
         t(isToCodex ? 'notification.tocodex_api_key_required' : 'notification.codex_api_key_required'),
@@ -1298,12 +1300,12 @@ export function AiProvidersCodexEditPage({
     modelDiscoverySelected.size > 0;
 
   const renderKeyEntries = (entries: ApiKeyEntry[]) => {
-    const list = entries.length ? entries : [buildApiKeyEntry()];
+    const list = entries.length ? entries : [isToCodex ? buildToCodexApiKeyEntry() : buildApiKeyEntry()];
     const tableLayoutStyle = {
       gridTemplateColumns: isToCodex
-        ? '46px 56px 72px minmax(220px, 1.2fr) minmax(220px, 1.2fr) minmax(200px, 1fr) 180px'
+        ? '42px 52px 68px minmax(220px, 1.15fr) minmax(200px, 1.05fr) minmax(180px, 0.9fr) 168px'
         : '46px 56px 72px minmax(220px, 1.4fr) minmax(200px, 1.1fr) 180px',
-      minWidth: isToCodex ? '1080px' : '860px',
+      minWidth: isToCodex ? '980px' : '860px',
     } as const;
 
     const updateEntry = (idx: number, field: 'apiKey' | 'hmacSecret' | 'proxyUrl', value: string) => {
@@ -1327,13 +1329,18 @@ export function AiProvidersCodexEditPage({
       const next = list.filter((_, i) => i !== idx);
       setForm((prev) => ({
         ...prev,
-        apiKeyEntries: next.length ? next : [buildApiKeyEntry()],
+        apiKeyEntries: next.length
+          ? next
+          : [isToCodex ? buildToCodexApiKeyEntry() : buildApiKeyEntry()],
       }));
       resetTestState(next.length);
     };
 
     const addEntry = () => {
-      setForm((prev) => ({ ...prev, apiKeyEntries: [...list, buildApiKeyEntry()] }));
+      setForm((prev) => ({
+        ...prev,
+        apiKeyEntries: [...list, isToCodex ? buildToCodexApiKeyEntry() : buildApiKeyEntry()],
+      }));
       resetTestState(list.length + 1);
     };
 
@@ -1494,6 +1501,12 @@ export function AiProvidersCodexEditPage({
         ) : (
           <>
             <Input
+              label={t('ai_providers.codex_add_modal_url_label')}
+              value={form.baseUrl ?? ''}
+              onChange={(e) => setForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
+              disabled={disableControls || saving || isTestingKeys}
+            />
+            <Input
               label={t('ai_providers.priority_label')}
               hint={t('ai_providers.priority_hint')}
               type="number"
@@ -1515,12 +1528,6 @@ export function AiProvidersCodexEditPage({
               value={form.prefix ?? ''}
               onChange={(e) => setForm((prev) => ({ ...prev, prefix: e.target.value }))}
               hint={t('ai_providers.prefix_hint')}
-              disabled={disableControls || saving || isTestingKeys}
-            />
-            <Input
-              label={t('ai_providers.codex_add_modal_url_label')}
-              value={form.baseUrl ?? ''}
-              onChange={(e) => setForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
               disabled={disableControls || saving || isTestingKeys}
             />
             {!isToCodex && (
@@ -1551,6 +1558,18 @@ export function AiProvidersCodexEditPage({
               removeButtonAriaLabel={t('common.delete')}
               disabled={disableControls || saving || isTestingKeys}
             />
+
+            <div className={styles.keyEntriesSection}>
+              <div className={styles.keyEntriesHeader}>
+                <label className={styles.keyEntriesTitle}>
+                  {t('ai_providers.codex_keys_label')}
+                </label>
+                <span className={styles.keyEntriesHint}>
+                  {t('ai_providers.codex_keys_hint')}
+                </span>
+              </div>
+              {renderKeyEntries(form.apiKeyEntries)}
+            </div>
 
             <div className={styles.modelConfigSection}>
               <div className={styles.modelConfigHeader}>
@@ -1599,54 +1618,58 @@ export function AiProvidersCodexEditPage({
               />
             </div>
             <div className={styles.modelTestPanel}>
-              <div className={styles.modelTestMeta}>
-                <label className={styles.modelTestLabel}>{t('ai_providers.codex_test_title')}</label>
-                <span className={styles.modelTestHint}>
-                  {t(isToCodex ? 'ai_providers.tocodex_test_hint' : 'ai_providers.codex_test_hint')}
-                </span>
+              <div className={styles.modelTestTopRow}>
+                <div className={styles.modelTestMeta}>
+                  <label className={styles.modelTestLabel}>{t('ai_providers.codex_test_title')}</label>
+                  <span className={styles.modelTestHint}>
+                    {t(isToCodex ? 'ai_providers.tocodex_test_hint' : 'ai_providers.codex_test_hint')}
+                  </span>
+                </div>
+                <div className={styles.modelTestPrimaryActions}>
+                  <Select
+                    value={testModel}
+                    options={modelSelectOptions}
+                    onChange={(value) => {
+                      setTestModel(value);
+                      setTestStatus('idle');
+                      setTestMessage('');
+                    }}
+                    placeholder={
+                      hasConfiguredModels
+                        ? t('ai_providers.codex_test_select_placeholder')
+                        : t('ai_providers.codex_test_select_empty')
+                    }
+                    className={styles.openaiTestSelect}
+                    ariaLabel={t('ai_providers.codex_test_title')}
+                    disabled={
+                      saving ||
+                      disableControls ||
+                      isTestingKeys ||
+                      testStatus === 'loading' ||
+                      !hasConfiguredModels
+                    }
+                  />
+                  <Button
+                    variant={testStatus === 'error' ? 'danger' : 'secondary'}
+                    size="sm"
+                    onClick={() => void testAllKeys()}
+                    loading={testStatus === 'loading'}
+                    disabled={
+                      saving ||
+                      disableControls ||
+                      isTestingKeys ||
+                      testStatus === 'loading' ||
+                      !hasConfiguredModels ||
+                      !hasTestableKeys
+                    }
+                    title={t('ai_providers.codex_test_all_hint')}
+                    className={styles.modelTestAllButton}
+                  >
+                    {t('ai_providers.codex_test_all_action')}
+                  </Button>
+                </div>
               </div>
-              <div className={styles.modelTestControls}>
-                <Select
-                  value={testModel}
-                  options={modelSelectOptions}
-                  onChange={(value) => {
-                    setTestModel(value);
-                    setTestStatus('idle');
-                    setTestMessage('');
-                  }}
-                  placeholder={
-                    hasConfiguredModels
-                      ? t('ai_providers.codex_test_select_placeholder')
-                      : t('ai_providers.codex_test_select_empty')
-                  }
-                  className={styles.openaiTestSelect}
-                  ariaLabel={t('ai_providers.codex_test_title')}
-                  disabled={
-                    saving ||
-                    disableControls ||
-                    isTestingKeys ||
-                    testStatus === 'loading' ||
-                    !hasConfiguredModels
-                  }
-                />
-                <Button
-                  variant={testStatus === 'error' ? 'danger' : 'secondary'}
-                  size="sm"
-                  onClick={() => void testAllKeys()}
-                  loading={testStatus === 'loading'}
-                  disabled={
-                    saving ||
-                    disableControls ||
-                    isTestingKeys ||
-                    testStatus === 'loading' ||
-                    !hasConfiguredModels ||
-                    !hasTestableKeys
-                  }
-                  title={t('ai_providers.codex_test_all_hint')}
-                  className={styles.modelTestAllButton}
-                >
-                  {t('ai_providers.codex_test_all_action')}
-                </Button>
+              <div className={styles.modelTestBottomRow}>
                 <div className={styles.modelTestBatchActions}>
                   <Button
                     variant="secondary"
@@ -1682,17 +1705,6 @@ export function AiProvidersCodexEditPage({
                 {testMessage}
               </div>
             )}
-            <div className={styles.keyEntriesSection}>
-              <div className={styles.keyEntriesHeader}>
-                <label className={styles.keyEntriesTitle}>
-                  {t('ai_providers.codex_keys_label')}
-                </label>
-                <span className={styles.keyEntriesHint}>
-                  {t('ai_providers.codex_keys_hint')}
-                </span>
-              </div>
-              {renderKeyEntries(form.apiKeyEntries)}
-            </div>
             <div className="form-group">
               <label>{t('ai_providers.excluded_models_label')}</label>
               <textarea

@@ -738,9 +738,8 @@
 }
 
 .modelTestPanel {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: $spacing-md;
   margin-top: 0;
   padding: $spacing-sm $spacing-md;
@@ -749,8 +748,18 @@
   background: var(--bg-secondary);
 
   @include mobile {
-    flex-direction: column;
-    align-items: stretch;
+    padding: $spacing-sm;
+  }
+}
+
+.modelTestTopRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, auto);
+  gap: $spacing-md;
+  align-items: start;
+
+  @include mobile {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -790,6 +799,30 @@
 
   :global(.btn) {
     min-height: 32px;
+  }
+}
+
+.modelTestPrimaryActions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: $spacing-xs;
+  min-width: 0;
+
+  @include mobile {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
+
+.modelTestBottomRow {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: $spacing-xs;
+  border-top: 1px solid var(--border-color);
+
+  @include mobile {
+    justify-content: flex-start;
   }
 }
 
@@ -959,14 +992,10 @@
   display: inline-flex;
   align-items: center;
   gap: $spacing-xs;
-  padding-left: $spacing-xs;
-  margin-left: $spacing-xs;
-  border-left: 1px solid var(--border-color);
+  flex-wrap: wrap;
 
   @include mobile {
-    padding-left: 0;
-    margin-left: 0;
-    border-left: none;
+    width: 100%;
   }
 }
 

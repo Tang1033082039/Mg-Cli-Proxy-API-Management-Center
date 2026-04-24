@@ -25,6 +25,8 @@ import {
   type ModelPrice,
 } from '@/utils/usage';
 import { sparklineOptions } from '@/utils/usage/chartConfig';
+import type { GeminiKeyConfig, OpenAIProviderConfig, ProviderKeyConfig } from '@/types';
+import { buildSourceInfoMap, resolveSourceDisplay } from '@/utils/sourceResolver';
 import type { UsagePayload } from './hooks/useUsageData';
 import type { SparklineBundle } from './hooks/useSparklines';
 import styles from '@/pages/UsagePage.module.scss';
@@ -53,9 +55,27 @@ export interface StatCardsProps {
     tpm: SparklineBundle | null;
     cost: SparklineBundle | null;
   };
+  geminiKeys?: GeminiKeyConfig[];
+  claudeConfigs?: ProviderKeyConfig[];
+  codexConfigs?: ProviderKeyConfig[];
+  tocodexConfigs?: ProviderKeyConfig[];
+  vertexConfigs?: ProviderKeyConfig[];
+  openaiProviders?: OpenAIProviderConfig[];
 }
 
-export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: StatCardsProps) {
+export function StatCards({
+  usage,
+  loading,
+  modelPrices,
+  nowMs,
+  sparklines,
+  geminiKeys = [],
+  claudeConfigs = [],
+  codexConfigs = [],
+  tocodexConfigs = [],
+  vertexConfigs = [],
+  openaiProviders = [],
+}: StatCardsProps) {
   const { t } = useTranslation();
   const latencyHint = t('usage_stats.latency_unit_hint', {
     field: LATENCY_SOURCE_FIELD,
@@ -136,35 +156,48 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
     usageMetrics.tokens.cachedTokens,
     displayTotalTokens
   );
+  const sourceInfoMap = useMemo(
+    () =>
+      buildSourceInfoMap({
+        geminiApiKeys: geminiKeys,
+        claudeApiKeys: claudeConfigs,
+        codexApiKeys: codexConfigs,
+        tocodexApiKeys: tocodexConfigs,
+        vertexApiKeys: vertexConfigs,
+        openaiCompatibility: openaiProviders,
+      }),
+    [claudeConfigs, codexConfigs, geminiKeys, openaiProviders, tocodexConfigs, vertexConfigs]
+  );
   const providerCacheRates = useMemo(() => {
-    const buckets = new Map<string, { totalTokens: number; cachedTokens: number }>();
+    const buckets = new Map<string, { label: string; type: string; totalTokens: number; cachedTokens: number }>();
+    const emptyAuthFileMap = new Map();
     collectUsageDetails(usage).forEach((detail) => {
-      const source = String(detail.source ?? '').toLowerCase();
-      const label = source.includes('claude')
-        ? 'Claude'
-        : source.includes('codex')
-          ? 'Codex'
-          : source.includes('openai')
-            ? 'OpenAI'
-            : source.includes('vertex')
-              ? 'Vertex'
-              : source.includes('gemini')
-                ? 'Gemini'
-                : t('usage_stats.other_provider');
+      const sourceInfo = resolveSourceDisplay(
+        detail.source ?? '',
+        detail.auth_index,
+        sourceInfoMap,
+        emptyAuthFileMap
+      );
+      const key = sourceInfo.identityKey ?? sourceInfo.displayName;
       const tokenMetrics = extractTokenMetrics(detail);
-      const current = buckets.get(label) ?? { totalTokens: 0, cachedTokens: 0 };
+      const current = buckets.get(key) ?? {
+        label: sourceInfo.displayName,
+        type: sourceInfo.type,
+        totalTokens: 0,
+        cachedTokens: 0,
+      };
       current.totalTokens += tokenMetrics.totalTokens;
       current.cachedTokens += tokenMetrics.cachedTokens;
-      buckets.set(label, current);
+      buckets.set(key, current);
     });
-    return Array.from(buckets.entries())
-      .map(([label, bucket]) => ({
-        label,
+    return Array.from(buckets.values())
+      .map((bucket) => ({
+        label: bucket.type ? `${bucket.label} · ${bucket.type}` : bucket.label,
         cacheRate: calculateCacheRate(bucket.cachedTokens, bucket.totalTokens),
       }))
       .sort((a, b) => b.cacheRate - a.cacheRate)
-      .slice(0, 5);
-  }, [t, usage]);
+      .slice(0, 6);
+  }, [sourceInfoMap, usage]);
 
   const statsCards: StatCardData[] = [
     {
@@ -334,17 +367,15 @@ export function StatCards({ usage, loading, modelPrices, nowMs, sparklines }: St
           </div>
           <div className={styles.statValue}>{card.value}</div>
           {card.meta && <div className={styles.statMetaRow}>{card.meta}</div>}
-          <div className={styles.statTrend}>
-            {card.trend ? (
+          {card.trend && (
+            <div className={styles.statTrend}>
               <Line
                 className={styles.sparkline}
                 data={card.trend.data}
                 options={sparklineOptions}
               />
-            ) : (
-              <div className={styles.statTrendPlaceholder}></div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       ))}
     </div>

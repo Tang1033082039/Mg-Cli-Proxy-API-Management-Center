@@ -296,6 +296,12 @@ export function UsagePage() {
         loading={loading}
         modelPrices={modelPrices}
         nowMs={nowMs}
+        geminiKeys={config?.geminiApiKeys || []}
+        claudeConfigs={config?.claudeApiKeys || []}
+        codexConfigs={config?.codexApiKeys || []}
+        tocodexConfigs={config?.tocodexApiKeys || []}
+        vertexConfigs={config?.vertexApiKeys || []}
+        openaiProviders={config?.openaiCompatibility || []}
         sparklines={{
           requests: requestsSparkline,
           tokens: tokensSparkline,
@@ -371,6 +377,7 @@ export function UsagePage() {
         geminiKeys={config?.geminiApiKeys || []}
         claudeConfigs={config?.claudeApiKeys || []}
         codexConfigs={config?.codexApiKeys || []}
+        tocodexConfigs={config?.tocodexApiKeys || []}
         vertexConfigs={config?.vertexApiKeys || []}
         openaiProviders={config?.openaiCompatibility || []}
       />
@@ -382,6 +389,7 @@ export function UsagePage() {
         geminiKeys={config?.geminiApiKeys || []}
         claudeConfigs={config?.claudeApiKeys || []}
         codexConfigs={config?.codexApiKeys || []}
+        tocodexConfigs={config?.tocodexApiKeys || []}
         vertexConfigs={config?.vertexApiKeys || []}
         openaiProviders={config?.openaiCompatibility || []}
       />

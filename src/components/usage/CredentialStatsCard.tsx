@@ -23,6 +23,7 @@ export interface CredentialStatsCardProps {
   geminiKeys: GeminiKeyConfig[];
   claudeConfigs: ProviderKeyConfig[];
   codexConfigs: ProviderKeyConfig[];
+  tocodexConfigs?: ProviderKeyConfig[];
   vertexConfigs: ProviderKeyConfig[];
   openaiProviders: OpenAIProviderConfig[];
 }
@@ -48,6 +49,7 @@ export function CredentialStatsCard({
   geminiKeys,
   claudeConfigs,
   codexConfigs,
+  tocodexConfigs = [],
   vertexConfigs,
   openaiProviders,
 }: CredentialStatsCardProps) {
@@ -90,10 +92,11 @@ export function CredentialStatsCard({
         geminiApiKeys: geminiKeys,
         claudeApiKeys: claudeConfigs,
         codexApiKeys: codexConfigs,
+        tocodexApiKeys: tocodexConfigs,
         vertexApiKeys: vertexConfigs,
         openaiCompatibility: openaiProviders,
       }),
-    [claudeConfigs, codexConfigs, geminiKeys, openaiProviders, vertexConfigs]
+    [claudeConfigs, codexConfigs, geminiKeys, openaiProviders, tocodexConfigs, vertexConfigs]
   );
 
   const rows = useMemo((): CredentialRow[] => {

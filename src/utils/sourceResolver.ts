@@ -6,6 +6,7 @@ export interface SourceInfoMapInput {
   geminiApiKeys?: GeminiKeyConfig[];
   claudeApiKeys?: ProviderKeyConfig[];
   codexApiKeys?: ProviderKeyConfig[];
+  tocodexApiKeys?: ProviderKeyConfig[];
   vertexApiKeys?: ProviderKeyConfig[];
   openaiCompatibility?: OpenAIProviderConfig[];
 }
@@ -90,34 +91,43 @@ export function buildSourceInfoMap(input: SourceInfoMapInput): SourceInfoMap {
     });
   });
 
-  (input.codexApiKeys || []).forEach((provider, providerIndex) => {
-    const candidates = new Set<string>();
-    const authIndices: Array<unknown> = [provider.authIndex];
-    const entries = provider.apiKeyEntries?.length
-      ? provider.apiKeyEntries
-      : provider.apiKey
-        ? [{ apiKey: provider.apiKey, authIndex: provider.authIndex }]
-        : [];
+  const registerCodexLikeProvider = (
+    providers: ProviderKeyConfig[],
+    type: 'codex' | 'tocodex',
+    label: string
+  ) => {
+    providers.forEach((provider, providerIndex) => {
+      const candidates = new Set<string>();
+      const authIndices: Array<unknown> = [provider.authIndex];
+      const entries = provider.apiKeyEntries?.length
+        ? provider.apiKeyEntries
+        : provider.apiKey
+          ? [{ apiKey: provider.apiKey, authIndex: provider.authIndex }]
+          : [];
 
-    buildCandidateUsageSourceIds({
-      apiKey: provider.apiKey,
-      prefix: provider.prefix,
-    }).forEach((id) => candidates.add(id));
-    entries.forEach((entry) => {
-      authIndices.push(entry.authIndex);
-      buildCandidateUsageSourceIds({ apiKey: entry.apiKey }).forEach((id) => candidates.add(id));
+      buildCandidateUsageSourceIds({
+        apiKey: provider.apiKey,
+        prefix: provider.prefix,
+      }).forEach((id) => candidates.add(id));
+      entries.forEach((entry) => {
+        authIndices.push(entry.authIndex);
+        buildCandidateUsageSourceIds({ apiKey: entry.apiKey }).forEach((id) => candidates.add(id));
+      });
+
+      registerProvider(
+        {
+          displayName: provider.prefix?.trim() || `${label} #${providerIndex + 1}`,
+          type,
+          identityKey: buildProviderIdentityKey(type, providerIndex),
+        },
+        authIndices,
+        candidates
+      );
     });
+  };
 
-    registerProvider(
-      {
-        displayName: provider.prefix?.trim() || `Codex #${providerIndex + 1}`,
-        type: 'codex',
-        identityKey: buildProviderIdentityKey('codex', providerIndex),
-      },
-      authIndices,
-      candidates
-    );
-  });
+  registerCodexLikeProvider(input.codexApiKeys || [], 'codex', 'Codex');
+  registerCodexLikeProvider(input.tocodexApiKeys || [], 'tocodex', 'ToCodex');
 
   (input.openaiCompatibility || []).forEach((provider, providerIndex) => {
     const candidates = new Set<string>();
