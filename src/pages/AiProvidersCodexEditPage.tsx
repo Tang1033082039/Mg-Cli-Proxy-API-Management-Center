@@ -548,6 +548,7 @@ export function AiProvidersCodexEditPage({
     () => normalizeToCodexTestPath(form.testPath, form.requestMode),
     [form.requestMode, form.testPath]
   );
+  const baseUrl = String(form.baseUrl ?? '').trim();
   const toCodexTestMode = toCodexTestPath === TOCODEX_DEFAULT_CHAT_PATH ? 'chat' : 'responses';
   const availableModels = useMemo(
     () => form.modelEntries.map((entry) => entry.name.trim()).filter(Boolean),
@@ -591,7 +592,7 @@ export function AiProvidersCodexEditPage({
       .join('|');
     return [
       provider,
-      form.baseUrl.trim(),
+      baseUrl,
       form.proxyUrl?.trim() || '',
       isToCodex ? toCodexRequestMode : form.requestMode?.trim() || '',
       form.chatPath?.trim() || '',
@@ -604,7 +605,7 @@ export function AiProvidersCodexEditPage({
       modelsSignature,
     ].join('||');
   }, [
-    form.baseUrl,
+    baseUrl,
     form.chatPath,
     form.headers,
     form.modelEntries,
@@ -696,7 +697,6 @@ export function AiProvidersCodexEditPage({
 
   const runSingleKeyTest = useCallback(
     async (keyIndex: number): Promise<boolean> => {
-      const baseUrl = form.baseUrl.trim();
       if (!baseUrl) {
         showNotification(
           t(isToCodex ? 'notification.tocodex_test_url_required' : 'notification.codex_test_url_required'),
@@ -817,8 +817,8 @@ export function AiProvidersCodexEditPage({
     },
     [
       availableModels,
+      baseUrl,
       form.apiKeyEntries,
-      form.baseUrl,
       form.headers,
       form.proxyUrl,
       isToCodex,
@@ -857,7 +857,6 @@ export function AiProvidersCodexEditPage({
   const testAllKeys = useCallback(async () => {
     if (isTestingKeys) return;
 
-    const baseUrl = form.baseUrl.trim();
     if (!baseUrl) {
       const message = t(
         isToCodex ? 'notification.tocodex_test_url_required' : 'notification.codex_test_url_required'
@@ -944,8 +943,8 @@ export function AiProvidersCodexEditPage({
     }
   }, [
     availableModels,
+    baseUrl,
     form.apiKeyEntries,
-    form.baseUrl,
     isTestingKeys,
     isToCodex,
     runSingleKeyTest,
@@ -1378,7 +1377,7 @@ export function AiProvidersCodexEditPage({
             const modelName = testModel.trim() || availableModels[0] || '';
             const canTestKey =
               hasUsableApiKeyEntry(entry, isToCodex) &&
-              Boolean(form.baseUrl.trim()) &&
+              Boolean(baseUrl) &&
               Boolean(modelName);
 
             return (
