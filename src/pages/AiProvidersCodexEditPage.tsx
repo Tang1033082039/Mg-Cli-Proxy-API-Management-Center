@@ -695,7 +695,9 @@ export function AiProvidersCodexEditPage({
       if (!keyEntry?.apiKey?.trim()) {
         setKeyTestStatus(keyIndex, {
           status: 'error',
-          message: t('notification.codex_test_key_required'),
+          message: t(
+            isToCodex ? 'notification.tocodex_test_key_required' : 'notification.codex_test_key_required'
+          ),
         });
         return false;
       }
