@@ -4,7 +4,14 @@ export const TOCODEX_DEFAULT_CHAT_PATH = '/v1/chat/completions';
 export const TOCODEX_DEFAULT_RESPONSES_PATH = '/v1/responses';
 export const TOCODEX_DEFAULT_RESPONSES_COMPACT_PATH = '/v1/responses/compact';
 export const TOCODEX_DEFAULT_MODELS_PATH = '/v1/models';
-export const TOCODEX_DEFAULT_TEST_PATH = '/v1/chat/completions';
+export const TOCODEX_DEFAULT_TEST_PATH = TOCODEX_DEFAULT_RESPONSES_PATH;
+export const TOCODEX_TEST_PATH_OPTIONS = [
+  TOCODEX_DEFAULT_CHAT_PATH,
+  TOCODEX_DEFAULT_RESPONSES_PATH,
+] as const;
+
+export type ToCodexRequestMode = 'chat' | 'responses';
+export type ToCodexTestPath = (typeof TOCODEX_TEST_PATH_OPTIONS)[number];
 
 const normalizeJoinedPath = (value: string, fallback: string): string => {
   const raw = String(value ?? '').trim();
@@ -22,6 +29,67 @@ const normalizeJoinedPath = (value: string, fallback: string): string => {
   return `${normalizedPath}${query}`;
 };
 
+const splitPathAndQuery = (value: string): { path: string; query: string } => {
+  const queryIndex = value.indexOf('?');
+  if (queryIndex < 0) {
+    return { path: value, query: '' };
+  }
+  return {
+    path: value.slice(0, queryIndex) || '/',
+    query: value.slice(queryIndex + 1),
+  };
+};
+
+const splitPathSegments = (value: string): string[] =>
+  value
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+const resolveOverlapSize = (baseSegments: string[], requestSegments: string[]): number => {
+  const maxSize = Math.min(baseSegments.length, requestSegments.length);
+  for (let size = maxSize; size > 0; size -= 1) {
+    let matched = true;
+    for (let index = 0; index < size; index += 1) {
+      if (baseSegments[baseSegments.length - size + index] !== requestSegments[index]) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) {
+      return size;
+    }
+  }
+  return 0;
+};
+
+const joinToCodexPath = (basePath: string, requestPath: string): string => {
+  const normalizedBasePath = normalizeJoinedPath(basePath || '/', '/');
+  const normalizedRequestPath = normalizeJoinedPath(requestPath, '/');
+  const baseSegments = splitPathSegments(normalizedBasePath);
+  const requestSegments = splitPathSegments(normalizedRequestPath);
+
+  if (requestSegments.length === 0) {
+    return normalizedBasePath;
+  }
+
+  let mergedBaseSegments = baseSegments;
+  let overlapSize = resolveOverlapSize(baseSegments, requestSegments);
+  if (overlapSize === 0) {
+    const firstSharedIndex = baseSegments.indexOf(requestSegments[0]);
+    if (firstSharedIndex >= 0) {
+      mergedBaseSegments = baseSegments.slice(0, firstSharedIndex + 1);
+      overlapSize = resolveOverlapSize(mergedBaseSegments, requestSegments);
+    }
+  }
+
+  const mergedSegments = [...mergedBaseSegments, ...requestSegments.slice(overlapSize)];
+  return mergedSegments.length ? `/${mergedSegments.join('/')}` : '/';
+};
+
+export const normalizeToCodexRequestMode = (value: string | undefined): ToCodexRequestMode =>
+  String(value ?? '').trim().toLowerCase() === 'chat' ? 'chat' : 'responses';
+
 export const normalizeToCodexPath = (pathOrUrl: string | undefined, fallback: string): string => {
   const normalizedFallback = normalizeJoinedPath(fallback, '/');
   const raw = String(pathOrUrl ?? '').trim();
@@ -34,6 +102,33 @@ export const normalizeToCodexPath = (pathOrUrl: string | undefined, fallback: st
     return normalizeJoinedPath(raw, normalizedFallback);
   }
 };
+
+export const normalizeToCodexTestPath = (
+  pathOrUrl: string | undefined,
+  requestMode?: string
+): ToCodexTestPath => {
+  const fallback =
+    normalizeToCodexRequestMode(requestMode) === 'chat'
+      ? TOCODEX_DEFAULT_CHAT_PATH
+      : TOCODEX_DEFAULT_RESPONSES_PATH;
+  const normalizedPath = normalizeToCodexPath(pathOrUrl, fallback);
+  const { path } = splitPathAndQuery(normalizedPath);
+  if (path === TOCODEX_DEFAULT_CHAT_PATH) {
+    return TOCODEX_DEFAULT_CHAT_PATH;
+  }
+  if (path === TOCODEX_DEFAULT_RESPONSES_PATH) {
+    return TOCODEX_DEFAULT_RESPONSES_PATH;
+  }
+  return fallback;
+};
+
+export const resolveToCodexTestMode = (
+  pathOrUrl: string | undefined,
+  requestMode?: string
+): ToCodexRequestMode =>
+  normalizeToCodexTestPath(pathOrUrl, requestMode) === TOCODEX_DEFAULT_CHAT_PATH
+    ? 'chat'
+    : 'responses';
 
 export const buildToCodexEndpoint = (
   baseUrl: string,
@@ -48,7 +143,15 @@ export const buildToCodexEndpoint = (
     return raw;
   }
   const normalizedPath = normalizeToCodexPath(pathOrUrl, fallback);
-  return `${normalizedBase.replace(/\/+$/g, '')}${normalizedPath}`;
+  try {
+    const parsedBase = new URL(normalizedBase);
+    const { path, query } = splitPathAndQuery(normalizedPath);
+    parsedBase.pathname = joinToCodexPath(parsedBase.pathname, path);
+    parsedBase.search = query ? `?${query}` : '';
+    return parsedBase.toString();
+  } catch {
+    return `${normalizedBase.replace(/\/+$/g, '')}${normalizedPath}`;
+  }
 };
 
 export const resolveToCodexSignaturePath = (
