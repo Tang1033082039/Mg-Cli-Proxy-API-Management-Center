@@ -96,7 +96,7 @@ function ApiMetricsSummary({
               <span className={styles.statFailure}>{metrics.failureCount.toLocaleString()}</span>
             </>
           ) : (
-            <span className={styles.statSuccess}>{metrics.successCount.toLocaleString()}</span>{' '}
+            <span className={styles.statSuccess}>{metrics.successCount.toLocaleString()}</span>
           )}
         </em>
       </span>
