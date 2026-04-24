@@ -396,15 +396,14 @@
 .apiList {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .apiItem {
-  background-color: color-mix(in srgb, var(--bg-secondary) 78%, var(--bg-primary));
-  border-radius: $radius-md;
+  background-color: color-mix(in srgb, var(--bg-secondary) 70%, var(--bg-primary));
+  border-radius: $radius-sm;
   border: 1px solid var(--border-color);
   overflow: hidden;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
 }
 
 .apiHeader {
@@ -412,7 +411,7 @@
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding: 12px;
+  padding: 8px 10px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -434,7 +433,7 @@
 .apiInfo {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 6px;
   min-width: 0;
   flex: 1;
 }
@@ -442,76 +441,13 @@
 .apiEndpoint {
   font-weight: 600;
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 13px;
   word-break: break-all;
 }
 
 .apiMetricsSummary {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-.statCard:nth-child(3) .statTrend {
-  display: none;
-}
-
-.apiSummaryGrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-
-  @include mobile {
-    grid-template-columns: 1fr;
-  }
-}
-
-.apiItem .apiSummaryGrid {
-  grid-template-columns: minmax(150px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr);
-}
-
-.apiSummaryPill,
-.apiBreakdownItem {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  padding: 9px 10px;
-  border: 1px solid var(--border-color);
-  background: color-mix(in srgb, var(--bg-primary) 82%, var(--bg-tertiary));
-  border-radius: $radius-md;
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.35;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-}
-
-.apiSummaryPill strong,
-.apiBreakdownItem strong {
-  color: var(--text-primary);
-  font-size: 15px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.apiSummaryPill span,
-.apiBreakdownItem span {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.apiSummaryPill em,
-.apiBreakdownItem em {
-  color: var(--text-tertiary);
-  font-style: normal;
-  font-variant-numeric: tabular-nums;
-}
-
-.apiBreakdownGrid {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  grid-template-columns: minmax(94px, 0.8fr) minmax(126px, 1.1fr) minmax(104px, 0.9fr) minmax(86px, 0.7fr) minmax(96px, 0.8fr) minmax(104px, 0.9fr);
   gap: 6px;
 
   @include tablet {
@@ -523,8 +459,51 @@
   }
 }
 
-.apiItem .apiBreakdownGrid {
-  grid-template-columns: repeat(5, minmax(110px, 1fr));
+.apiMetricsSummaryCompact {
+  grid-template-columns: minmax(72px, 0.7fr) minmax(110px, 1.1fr) minmax(90px, 0.9fr) minmax(70px, 0.65fr) minmax(86px, 0.8fr) minmax(96px, 0.9fr);
+  gap: 4px;
+}
+
+.statCard:nth-child(3) .statTrend {
+  display: none;
+}
+
+.apiMetricChip {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  min-height: 42px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-primary) 78%, transparent);
+  border-radius: $radius-sm;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.apiMetricChip strong {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.apiMetricChip span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.apiMetricChip em {
+  color: var(--text-tertiary);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .expandIcon {
@@ -534,24 +513,29 @@
 }
 
 .apiModels {
-  padding: 12px;
+  padding: 6px 8px 8px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 5px;
   border-top: 1px solid var(--border-color);
   margin-top: 0;
-  background: color-mix(in srgb, var(--bg-secondary) 72%, transparent);
+  background: color-mix(in srgb, var(--bg-primary) 58%, transparent);
 }
 
 .modelRow {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(140px, 0.8fr) minmax(0, 2.8fr);
   gap: 8px;
-  padding: 10px;
-  background-color: var(--bg-primary);
+  align-items: center;
+  padding: 6px 8px;
+  background-color: color-mix(in srgb, var(--bg-secondary) 58%, var(--bg-primary));
   border: 1px solid var(--border-color);
-  border-radius: $radius-md;
-  font-size: 12px;
+  border-radius: $radius-sm;
+  font-size: 11px;
+
+  @include tablet {
+    grid-template-columns: 1fr;
+  }
 }
 
 .modelRowHeader {
@@ -569,7 +553,7 @@
 
 .modelName {
   color: var(--text-primary);
-  font-weight: 500;
+  font-weight: 600;
   word-break: break-all;
 }
 

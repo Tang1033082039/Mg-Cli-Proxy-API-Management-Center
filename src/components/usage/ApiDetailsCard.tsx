@@ -72,9 +72,11 @@ const getModelMetrics = (stats: ApiModelStats): ApiMetricSource => ({
 function ApiMetricsSummary({
   metrics,
   hasPrices,
+  compact = false,
 }: {
   metrics: ApiMetricSource;
   hasPrices: boolean;
+  compact?: boolean;
 }) {
   const { t } = useTranslation();
   const costValue = hasPrices ? formatUsd(metrics.totalCost) : '--';
@@ -83,53 +85,53 @@ function ApiMetricsSummary({
   const cacheCost = hasPrices ? formatUsd(metrics.cacheCost) : '--';
 
   return (
-    <div className={styles.apiMetricsSummary}>
-      <div className={styles.apiSummaryGrid}>
-        <span className={styles.apiSummaryPill}>
-          <span>{t('usage_stats.requests_count')}</span>
-          <strong>{metrics.requests.toLocaleString()}</strong>
-          <em>
+    <div className={`${styles.apiMetricsSummary} ${compact ? styles.apiMetricsSummaryCompact : ''}`}>
+      <span className={styles.apiMetricChip}>
+        <span>{t('usage_stats.requests_count')}</span>
+        <strong>{metrics.requests.toLocaleString()}</strong>
+        <em>
+          {metrics.failureCount > 0 ? (
+            <>
+              <span className={styles.statSuccess}>{metrics.successCount.toLocaleString()}</span>{' '}
+              <span className={styles.statFailure}>{metrics.failureCount.toLocaleString()}</span>
+            </>
+          ) : (
             <span className={styles.statSuccess}>{metrics.successCount.toLocaleString()}</span>{' '}
-            <span className={styles.statFailure}>{metrics.failureCount.toLocaleString()}</span>
-          </em>
+          )}
+        </em>
+      </span>
+      <span className={styles.apiMetricChip}>
+        <span>{t('usage_stats.tokens_count')}</span>
+        <strong>{formatCompactNumber(metrics.totalTokens)}</strong>
+        <em>
+          {t('usage_stats.input_tokens')} {formatCompactNumber(metrics.inputTokens)} ·{' '}
+          {t('usage_stats.output_tokens')} {formatCompactNumber(metrics.outputTokens)}
+        </em>
+      </span>
+      <span className={styles.apiMetricChip}>
+        <span>{t('usage_stats.cached_tokens')}</span>
+        <strong>{formatCompactNumber(metrics.cachedTokens)}</strong>
+        <em>{cacheCost}</em>
+      </span>
+      <span className={styles.apiMetricChip}>
+        <span>{t('usage_stats.cache_rate')}</span>
+        <strong>{formatPercentage(metrics.cacheRate)}</strong>
+      </span>
+      {metrics.reasoningTokens > 0 && (
+        <span className={styles.apiMetricChip}>
+          <span>{t('usage_stats.reasoning_tokens')}</span>
+          <strong>{formatCompactNumber(metrics.reasoningTokens)}</strong>
         </span>
-        <span className={styles.apiSummaryPill}>
-          <span>{t('usage_stats.tokens_count')}</span>
-          <strong>{formatCompactNumber(metrics.totalTokens)}</strong>
-        </span>
-        <span className={styles.apiSummaryPill}>
+      )}
+      {hasPrices && (
+        <span className={styles.apiMetricChip}>
           <span>{t('usage_stats.total_cost')}</span>
           <strong>{costValue}</strong>
+          <em>
+            {inputCost} / {outputCost}
+          </em>
         </span>
-      </div>
-
-      <div className={styles.apiBreakdownGrid}>
-        <span className={styles.apiBreakdownItem}>
-          <span>{t('usage_stats.input_tokens')}</span>
-          <strong>{formatCompactNumber(metrics.inputTokens)}</strong>
-          <em>{inputCost}</em>
-        </span>
-        <span className={styles.apiBreakdownItem}>
-          <span>{t('usage_stats.output_tokens')}</span>
-          <strong>{formatCompactNumber(metrics.outputTokens)}</strong>
-          <em>{outputCost}</em>
-        </span>
-        <span className={styles.apiBreakdownItem}>
-          <span>{t('usage_stats.cached_tokens')}</span>
-          <strong>{formatCompactNumber(metrics.cachedTokens)}</strong>
-          <em>{cacheCost}</em>
-        </span>
-        <span className={styles.apiBreakdownItem}>
-          <span>{t('usage_stats.cache_rate')}</span>
-          <strong>{formatPercentage(metrics.cacheRate)}</strong>
-        </span>
-        {metrics.reasoningTokens > 0 && (
-          <span className={styles.apiBreakdownItem}>
-            <span>{t('usage_stats.reasoning_tokens')}</span>
-            <strong>{formatCompactNumber(metrics.reasoningTokens)}</strong>
-          </span>
-        )}
-      </div>
+      )}
     </div>
   );
 }
@@ -238,7 +240,11 @@ export function ApiDetailsCard({ apiStats, loading, hasPrices }: ApiDetailsCardP
                             <div className={styles.modelRowHeader}>
                               <span className={styles.modelName}>{model}</span>
                             </div>
-                            <ApiMetricsSummary metrics={getModelMetrics(stats)} hasPrices={hasPrices} />
+                            <ApiMetricsSummary
+                              metrics={getModelMetrics(stats)}
+                              hasPrices={hasPrices}
+                              compact
+                            />
                           </div>
                         ))}
                       </div>

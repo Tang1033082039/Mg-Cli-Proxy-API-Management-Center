@@ -235,19 +235,10 @@ export const buildToCodexSignedHeaders = async ({
     trimmedSecret
   );
 
-  let host = '';
-  try {
-    host = new URL(endpoint).host;
-  } catch {
-    host = '';
-  }
-
   const fixedHeaders: Record<string, string> = {
     Accept: accept,
-    'Accept-Encoding': 'br, gzip, deflate',
     'Accept-Language': '*',
     Authorization: `Bearer ${trimmedApiKey}`,
-    Connection: 'keep-alive',
     'HTTP-Referer': 'https://github.com/tocodex/ToCodex',
     'Sec-Fetch-Mode': 'cors',
     'User-Agent': 'ToCodex/3.1.3',
@@ -256,10 +247,6 @@ export const buildToCodexSignedHeaders = async ({
     'X-ToCodex-Nonce': nonce,
     'X-ToCodex-Sig': signature,
   };
-  if (host) {
-    fixedHeaders.Host = host;
-  }
-
   const normalizedContentType =
     contentType === undefined ? (method.trim().toUpperCase() === 'GET' ? '' : 'application/json') : contentType;
   if (normalizedContentType) {
